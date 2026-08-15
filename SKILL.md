@@ -125,9 +125,21 @@ Check what can be computed rather than seen:
 - overhangs within `max_overhang`, or support is called out
 - the part fits `bed_size`
 
-⚠️ `openscad-validate.sh` is a **report, not a gate**: it exits 0 even when the file is broken.
-Read the `Category:` line — `OK` passes, anything else (`SYNTAX_ERROR`, `WARNING`, …) stops the
-part here. Do not rely on the exit code or on `set -e` to catch it.
+⚠️ `openscad-validate.sh` is a **report, not a gate**. Read the `Category:` line — `OK` passes,
+anything else stops the part here:
+
+| Category | Meaning |
+|---|---|
+| `OK` | rendered, and geometry was actually written |
+| `SYNTAX_ERROR` / `WARNING` / `EMPTY_MODEL` | the file is wrong — fix it |
+| `KILLED` | terminated by a signal (OOM, or too slow for the caller's timeout). **Unverified, not passed.** Retry with a lower `$fn`, or render the parts separately |
+| `FAILED` | non-zero exit, cause not recognised |
+| `UNVERIFIED` | exited 0 but wrote no geometry |
+
+The last three exist because every category keys off what OpenSCAD *prints*: a killed run prints
+nothing, matches no pattern, and used to fall through to `OK` — announcing success exactly when the
+check had not run at all. If you add a category, add it **before** the final `else`, and never let
+an unrecognised state land on `OK`.
 
 A part that fails here never reaches the render. The eye is for shape; these are arithmetic,
 and arithmetic should not cost a vision call.

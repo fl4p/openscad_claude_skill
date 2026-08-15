@@ -48,8 +48,22 @@ echo "=== Validation Report ==="
 echo "File: $scad_file"
 echo "Exit code: $exit_code"
 
-# Categorize errors
-if echo "$output" | grep -q "Parser error"; then
+# Categorize errors.
+#
+# The exit status is consulted BEFORE the text patterns, and again in the final
+# else. This is not decoration: every branch below keys off something OpenSCAD
+# *printed*, so a run that was killed (OOM, timeout, SIGKILL) prints little or
+# nothing, matches no pattern, and used to fall through to "Category: OK" —
+# reporting success precisely when the check could not be performed at all.
+# A run that did not evaluate must never report that it evaluated cleanly.
+if [[ "$exit_code" -ge 128 ]]; then
+    echo "Category: KILLED"
+    echo "OpenSCAD was terminated by signal $((exit_code - 128)) — the file was"
+    echo "NOT validated. This is 'unverified', not 'passed'."
+    echo "Usual causes: out of memory, or a render too slow for the caller's timeout."
+    echo "Retry with a lower \$fn, or render the parts separately."
+    [[ -n "$output" ]] && echo "$output" | tail -5
+elif echo "$output" | grep -q "Parser error"; then
     echo "Category: SYNTAX_ERROR"
     echo "$output" | grep "ERROR:" | head -5
     echo ""
@@ -72,6 +86,17 @@ elif echo "$output" | grep -q "NSOpenGLContext\|GLX\|Unable to create"; then
 elif echo "$output" | grep -qi "warning"; then
     echo "Category: WARNING"
     echo "$output" | grep -i "warning" | head -10
+elif [[ "$exit_code" -ne 0 ]]; then
+    # Non-zero for a reason none of the patterns recognised. Unknown failure is
+    # still failure; do not launder it into OK.
+    echo "Category: FAILED"
+    echo "OpenSCAD exited $exit_code with no recognised error pattern."
+    [[ -n "$output" ]] && echo "$output" | tail -10
+elif [[ ! -s "$stl_out" ]]; then
+    # Exit 0 but nothing written — the run cannot be said to have produced a
+    # valid model, so it is unverified rather than fine.
+    echo "Category: UNVERIFIED"
+    echo "Exited 0 but wrote no geometry to $stl_out."
 else
     echo "Category: OK"
 fi
