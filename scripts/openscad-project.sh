@@ -18,14 +18,43 @@ EOF
     exit 1
 }
 
+# Sanitize a project name. Traversal protection lived only in cmd_init, so
+# `clean ../victim` resolved outside PROJECTS_ROOT and deleted another
+# directory's output/ and previews/. Every command that turns a name into a
+# path must go through this.
+validate_name() {
+    if [[ ! "$1" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "ERROR: Project name must contain only letters, numbers, hyphens, and underscores." >&2
+        return 1
+    fi
+}
+
+# Resolve an EXISTING project to a real path, and refuse anything that does not
+# sit directly beneath PROJECTS_ROOT. The name check alone would still be
+# fooled by a symlink inside the root, so canonicalize and check the parent.
+#
+# Returns non-zero rather than calling exit: this runs inside $( ), where exit
+# would only kill the subshell and leave the caller running with an empty path.
+# Call it as:  dir=$(project_dir_for "$name") || exit 1
+project_dir_for() {
+    local name="$1" dir real_root real_dir
+    validate_name "$name" || return 1
+    dir="$PROJECTS_ROOT/$name"
+    real_root=$(cd "$PROJECTS_ROOT" 2>/dev/null && pwd -P) || {
+        echo "ERROR: projects root missing: $PROJECTS_ROOT" >&2; return 1; }
+    real_dir=$(cd "$dir" 2>/dev/null && pwd -P) || {
+        echo "Project not found: $name" >&2; return 1; }
+    if [[ "$(dirname "$real_dir")" != "$real_root" ]]; then
+        echo "ERROR: '$name' resolves to $real_dir, outside $real_root" >&2
+        return 1
+    fi
+    printf '%s' "$real_dir"
+}
+
 cmd_init() {
     local name="$1"
 
-    # Sanitize project name to prevent directory traversal
-    if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo "ERROR: Project name must contain only letters, numbers, hyphens, and underscores." >&2
-        exit 1
-    fi
+    validate_name "$name" || exit 1
 
     local project_dir="$PROJECTS_ROOT/$name"
 
@@ -138,12 +167,8 @@ cmd_list() {
 
 cmd_clean() {
     local name="$1"
-    local project_dir="$PROJECTS_ROOT/$name"
-
-    if [[ ! -d "$project_dir" ]]; then
-        echo "Project not found: $name"
-        exit 1
-    fi
+    local project_dir
+    project_dir=$(project_dir_for "$name") || exit 1
 
     rm -rf "${project_dir:?}/output/"*
     rm -rf "${project_dir:?}/previews/"*
@@ -152,12 +177,8 @@ cmd_clean() {
 
 cmd_info() {
     local name="$1"
-    local project_dir="$PROJECTS_ROOT/$name"
-
-    if [[ ! -d "$project_dir" ]]; then
-        echo "Project not found: $name"
-        exit 1
-    fi
+    local project_dir
+    project_dir=$(project_dir_for "$name") || exit 1
 
     echo "Project: $name"
     echo "Path: $project_dir"

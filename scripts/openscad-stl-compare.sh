@@ -120,22 +120,42 @@ cat > "$TMPDIR/overlay.scad" << SCAD
 color("red", 0.5) import("$STL_B", convexity=10);
 SCAD
 
+# Export a boolean difference to STL and record WHY there is no file, if there
+# isn't one. This distinction is the whole point:
+#
+#   empty  - OpenSCAD evaluated the difference, found nothing, and therefore
+#            refused to write an STL (it exits non-zero saying so). The two
+#            solids really are identical in that direction: volume 0 is TRUE.
+#   failed - the render died (crash, kill, bad input). We know nothing. Volume
+#            0 here is a LIE, and used to be reported as a 100% perfect match
+#            on a pair of objects differing by 87.5% of their volume.
+#
+# The export also has to run unconditionally: it used to sit inside the PNG
+# render's `if`, so a failed preview silently skipped the measurement too.
+export_diff() {
+    local scad="$1" out="$2" status="$3" log="$3.log"
+    if "$OPENSCAD" --render --export-format binstl -o "$out" "$scad" >"$log" 2>&1 && [[ -s "$out" ]]; then
+        echo ok > "$status"
+    elif grep -q "Current top level object is empty" "$log"; then
+        echo empty > "$status"
+    else
+        echo failed > "$status"
+    fi
+}
+
 # Render A-B
 echo "  Rendering A-B (in original, missing from reconstruction)..."
 if "$OPENSCAD" --autocenter --viewall --imgsize="$IMGSIZE" --colorscheme=DeepOcean \
     --render -o "$OUTDIR/diff-A-minus-B.png" "$TMPDIR/diff-a-minus-b.scad" 2>"$TMPDIR/ab.log"; then
-    # Check if the difference produced any geometry
     if grep -q "Top level object is a 3D object" "$TMPDIR/ab.log"; then
         facets=$(grep "Facets:" "$TMPDIR/ab.log" | tail -1 | grep -oE '[0-9]+')
         echo "    Difference has $facets facets"
     fi
-    # Also export the difference as STL for volume analysis
-    "$OPENSCAD" --render --export-format binstl \
-        -o "$TMPDIR/diff-ab.stl" "$TMPDIR/diff-a-minus-b.scad" 2>/dev/null || true
 else
-    echo "    Render failed" >&2
+    echo "    Preview render failed (measurement continues)" >&2
     rm -f "$OUTDIR/diff-A-minus-B.png"
 fi
+export_diff "$TMPDIR/diff-a-minus-b.scad" "$TMPDIR/diff-ab.stl" "$TMPDIR/diff-ab.status"
 
 # Render B-A
 echo "  Rendering B-A (in reconstruction, not in original)..."
@@ -145,12 +165,11 @@ if "$OPENSCAD" --autocenter --viewall --imgsize="$IMGSIZE" --colorscheme=DeepOce
         facets=$(grep "Facets:" "$TMPDIR/ba.log" | tail -1 | grep -oE '[0-9]+')
         echo "    Difference has $facets facets"
     fi
-    "$OPENSCAD" --render --export-format binstl \
-        -o "$TMPDIR/diff-ba.stl" "$TMPDIR/diff-b-minus-a.scad" 2>/dev/null || true
 else
-    echo "    Render failed" >&2
+    echo "    Preview render failed (measurement continues)" >&2
     rm -f "$OUTDIR/diff-B-minus-A.png"
 fi
+export_diff "$TMPDIR/diff-b-minus-a.scad" "$TMPDIR/diff-ba.stl" "$TMPDIR/diff-ba.status"
 
 # Render overlay
 echo "  Rendering overlay..."
@@ -161,7 +180,29 @@ echo "  Rendering overlay..."
 echo ""
 echo "--- Difference Volume Analysis ---"
 python3 -c "
-import struct, os
+import struct, os, sys
+
+def diff_status(path):
+    try:
+        return open(path).read().strip()
+    except OSError:
+        return 'failed'
+
+# Refuse to score anything if either difference could not be evaluated. A
+# missing STL is only zero volume when OpenSCAD explicitly reported an empty
+# result; otherwise it means the measurement did not happen, and reporting a
+# match would be the worst possible direction for the failure.
+st_ab = diff_status('$TMPDIR/diff-ab.status')
+st_ba = diff_status('$TMPDIR/diff-ba.status')
+if 'failed' in (st_ab, st_ba):
+    print('')
+    print('COMPARISON UNVERIFIED')
+    print(f'  A-B export: {st_ab}')
+    print(f'  B-A export: {st_ba}')
+    print('  A boolean difference could not be evaluated, so the difference')
+    print('  volume is unknown -- NOT zero. No accuracy figure is produced.')
+    print('  See the .status.log files in the temp dir for the cause.')
+    sys.exit(1)
 
 def stl_volume(path):
     '''Calculate volume of a binary STL using signed tetrahedron method'''
@@ -214,7 +255,17 @@ if vol_a > 0:
         print('Result: Fair match (visible differences)')
     else:
         print('Result: Needs significant refinement')
-" 2>&1 || echo "Volume analysis failed (non-manifold geometry?)"
+" 2>&1 || VOLUME_ANALYSIS_FAILED=1
+
+# Propagate the failure instead of narrating it away. The old `|| echo "Volume
+# analysis failed (non-manifold geometry?)"` both guessed at a cause it had not
+# established and returned success, so a caller checking the exit status was
+# told the comparison had succeeded.
+if [[ -n "${VOLUME_ANALYSIS_FAILED:-}" ]]; then
+    echo ""
+    echo "Comparison did NOT complete: no accuracy figure was produced." >&2
+    exit 1
+fi
 
 # --- Step 4: Summary ---
 echo ""

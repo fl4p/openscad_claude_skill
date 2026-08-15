@@ -63,7 +63,35 @@ do_render() {
     local output=""
     local exit_code=0
 
+    # Tie success to a FRESH artifact. Reporting was previously based only on
+    # OpenSCAD's exit status, so a run that wrote nothing while exiting 0 would
+    # print "STL saved: model.stl (684 bytes)" — describing the PREVIOUS run's
+    # file. Stale output presented as current is worse than no output at all.
+    #
+    # So: collect every -o target, delete it before rendering (nothing stale can
+    # survive to be misreported), and require it to exist and be non-empty after.
+    local -a args=("$@") targets=()
+    local i
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        case "${args[$i]}" in
+            -o)  [[ -n "${args[$((i+1))]:-}" ]] && targets+=("${args[$((i+1))]}") ;;
+            -o*) targets+=("${args[$i]#-o}") ;;
+        esac
+    done
+    local t
+    for t in ${targets[@]+"${targets[@]}"}; do rm -f "$t"; done
+
     output=$("$OPENSCAD" "$@" "$scad_file" 2>&1) || exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+        for t in ${targets[@]+"${targets[@]}"}; do
+            if [[ ! -s "$t" ]]; then
+                echo "ERROR: OpenSCAD exited 0 but produced no output at $t" >&2
+                echo "$output" >&2
+                return 1
+            fi
+        done
+    fi
 
     if [[ $exit_code -ne 0 ]]; then
         echo "ERROR: OpenSCAD render failed (exit code $exit_code)" >&2

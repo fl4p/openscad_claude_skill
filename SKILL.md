@@ -118,12 +118,27 @@ assembly): it costs nothing and makes the next change trivial.
 bash ~/.claude/skills/openscad/scripts/openscad-validate.sh ~/openscad-projects/_quick/<name>.scad
 ```
 
-Check what can be computed rather than seen:
-- it compiles, with no warnings about unassigned variables
-- the bounding box matches the dimensions the user actually gave
-- no wall thinner than `min_wall`, no floor thinner than `min_floor` (printer profile)
-- overhangs within `max_overhang`, or support is called out
-- the part fits `bed_size`
+**What that script actually checks:** that OpenSCAD ran, and that it produced geometry. That is
+all. It reads diagnostics — it does **not** derive your bounding box, wall thickness, overhangs or
+bed fit, and it never has. Treating it as a dimensional gate means `cube([300,300,0.1])` sails
+through as `Category: OK` on a 256 mm bed.
+
+**The dimensional checks belong in the model**, as `assert()` — assertions are evaluated at render
+time and abort the render, so they are a real gate rather than a list of intentions:
+
+```openscad
+include <printable-lib.scad>          // brings in the printer profile's limits
+
+assert(wall  >= min_wall,  "wall below the printer's minimum");
+assert(floor_t >= min_floor, "floor below the printer's minimum");
+assert(outer_w < bed_size[0] && outer_h < bed_size[1], "part exceeds the bed");
+
+echo(str("Outer: ", outer_w, " x ", outer_h, " x ", total_h, " mm"));
+```
+
+Then read the `ECHO:` lines back and confirm the bounding box matches the dimensions the user
+actually gave. Overhangs are not derivable this way — either keep them self-supporting by
+construction (45° chamfers, tapers) or say out loud that support is required.
 
 ⚠️ `openscad-validate.sh` is a **report, not a gate**. Read the `Category:` line — `OK` passes,
 anything else stops the part here:
@@ -132,6 +147,7 @@ anything else stops the part here:
 |---|---|
 | `OK` | rendered, and geometry was actually written |
 | `SYNTAX_ERROR` / `WARNING` / `EMPTY_MODEL` | the file is wrong — fix it |
+| `ASSERTION_FAILED` | the model rejected its own parameters — the gate above working as intended |
 | `KILLED` | terminated by a signal (OOM, or too slow for the caller's timeout). **Unverified, not passed.** Retry with a lower `$fn`, or render the parts separately |
 | `FAILED` | non-zero exit, cause not recognised |
 | `UNVERIFIED` | exited 0 but wrote no geometry |
@@ -645,9 +661,13 @@ bash ~/.claude/skills/openscad/scripts/openscad-render.sh preview /tmp/stl-viewe
 
 Read all preview images to understand the 3D shape from multiple angles.
 
-### Step 1b: Auto-Reconstruction (NEW — recommended for most models)
+### Step 1b: Auto-Reconstruction — NOT IMPLEMENTED
 
-After running the adaptive slicer, use the auto-reconstructor to generate parametric .scad directly:
+⚠️ **`openscad-auto-reconstruct.py` does not exist in this repo.** The commands below fail with
+"No such file or directory". They are kept as a specification of what the tool should do, not as
+instructions you can follow. Skip to Step 2 and reconstruct by hand.
+
+~~After running the adaptive slicer, use the auto-reconstructor to generate parametric .scad directly:~~
 
 ```bash
 # Option A: With pre-computed analysis
@@ -955,7 +975,7 @@ All scripts live in `~/.claude/skills/openscad/scripts/`:
 | `openscad-stl-reconstruct.sh` | Automated STL analysis: profiles, primitives, CSG inference |
 | `openscad-sdf-optimize.py` | SDF-based parameter optimizer (IoU scoring, no OpenSCAD in loop) |
 | `openscad-adaptive-slice.py` | Adaptive multi-axis slicing (coarse→transitions→fine on X,Y,Z) |
-| `openscad-auto-reconstruct.py` | Auto-translate feature map → parametric .scad (circle fitting, hull blending) |
+| `openscad-auto-reconstruct.py` | **MISSING — not implemented.** Referenced by Reconstruct mode Step 1b; do not call it |
 
 ### openscad-render.sh Commands
 

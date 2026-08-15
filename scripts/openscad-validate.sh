@@ -73,6 +73,13 @@ elif echo "$output" | grep -q "Parser error"; then
         echo "Error at line $line. Context:"
         sed -n "$((line > 3 ? line - 3 : 1)),${line}p" "$scad_file" 2>/dev/null | cat -n
     fi
+elif echo "$output" | grep -q "Assertion.*failed"; then
+    # Must precede EMPTY_MODEL: a failed assert also produces no geometry, and
+    # "are your modules being called?" is actively misleading when the real
+    # cause is a constraint the model deliberately enforced.
+    echo "Category: ASSERTION_FAILED"
+    echo "The model rejected its own parameters — this is the gate working."
+    echo "$output" | grep -i "Assertion" | head -5
 elif echo "$output" | grep -q "Current top level object is empty"; then
     echo "Category: EMPTY_MODEL"
     echo "The model produces no geometry. Check:"
