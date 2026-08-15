@@ -14,3 +14,6 @@ Thumbs.db
 # OpenSCAD backup files
 *.scad~
 *.bak
+
+# Scratch fixtures created by review agents running in this tree
+.review-tmp/
