@@ -41,9 +41,12 @@ fail() { echo "SLICE-CHECK FAIL: $*" >&2; exit 1; }
 
 # Pull a '; key = value' header field. Empty result means ABSENT, which is a
 # failure: we cannot verify a setting the slicer did not record.
+# CRLF must be stripped here. A trailing \r survives into the value and then
+# 'Textured PEI Plate\r' != 'Textured PEI Plate' — producing a comparison that
+# fails while printing two identical-looking strings.
 field() {
     local v
-    v=$(grep -aoE "^; $1 = .*" "$gcode" | head -1 | sed 's/^; [^=]*= *//' || true)
+    v=$(grep -aoE "^; $1 = .*" "$gcode" | head -1 | sed 's/^; [^=]*= *//' | tr -d '\r' || true)
     printf '%s' "$v"
 }
 
@@ -74,24 +77,56 @@ esac
 expect=$(field "$key")
 [[ -n "$expect" ]] || fail "$key absent from $gcode — cannot verify the temperature"
 
-# Temperatures must be numbers. A header field is free text; without this,
-# 'banana' compares equal to 'banana' and the check passes.
-[[ "$bed_temp" =~ ^[0-9]+$ ]] || fail "first_layer_bed_temperature '$bed_temp' is not a number"
-[[ "$expect"   =~ ^[0-9]+$ ]] || fail "$key '$expect' is not a number"
+# Temperatures must be numbers (decimals allowed). A header field is free text;
+# without this, 'banana' compares equal to 'banana' and the check passes.
+num_re='^[0-9]+(\.[0-9]+)?$'
+[[ "$bed_temp" =~ $num_re ]] || fail "first_layer_bed_temperature '$bed_temp' is not a number"
+[[ "$expect"   =~ $num_re ]] || fail "$key '$expect' is not a number"
 
-[[ "$bed_temp" == "$expect" ]] || fail \
+awk -v a="$bed_temp" -v b="$expect" 'BEGIN{exit !(a+0 == b+0)}' || fail \
     "first-layer bed is ${bed_temp}C but $key for this filament is ${expect}C"
 
 # The header fields above are the slicer's INTENT. What actually heats the bed
-# is the M140/M190 command in the body, and custom start-G-code can override
-# the intent without touching the comments. Checking only the comments verifies
-# a proxy for the truth rather than the truth, so assert the first effective
-# bed command as well.
-effective=$(grep -aoE '^M1(40|90) S[0-9]+' "$gcode" \
-            | grep -oE '[0-9]+$' | awk '$1 > 0 { print; exit }' || true)
-[[ -n "$effective" ]] || fail "no M140/M190 bed command found in $gcode — the bed is never heated"
-[[ "$effective" == "$expect" ]] || fail \
-    "header says ${bed_temp}C but the first M140/M190 sets ${effective}C — the G-code body wins"
+# is the M140/M190 stream, and custom start-G-code can override the intent
+# without touching the comments.
+#
+# Checking only the FIRST bed command is not enough either: `M140 S55` followed
+# by `M190 S35` before the first extrusion prints the first layer at 35C while
+# the first match reads 55. So walk the commands CHRONOLOGICALLY and take the
+# target in force at the moment the first extrusion happens. Also accept the R
+# parameter (M190 R70 is a real target), match complete G-code words so S55.9
+# cannot be read as 55, and tolerate CRLF.
+effective=$(python3 - "$gcode" <<'PY'
+import re, sys
+target = None
+# M140/M190 as whole words, S or R, signed/decimal value
+cmd = re.compile(r'^\s*M1(?:40|90)(?=\s|$)(.*)$')
+par = re.compile(r'\b([SR])\s*(-?\d+(?:\.\d+)?)')
+# first real extrusion: a move with a positive E
+ext = re.compile(r'^\s*G[01](?=\s)(?=.*\bE\s*\+?(\d+(?:\.\d+)?))')
+try:
+    with open(sys.argv[1], 'r', errors='replace') as f:
+        for line in f:
+            line = line.rstrip('\r\n')
+            m = cmd.match(line)
+            if m:
+                vals = par.findall(m.group(1))
+                if vals:
+                    target = float(vals[-1][1])
+                continue
+            e = ext.match(line)
+            if e and float(e.group(1)) > 0:
+                break
+except OSError:
+    sys.exit(1)
+print('' if target is None else repr(target))
+PY
+) || fail "could not parse the G-code body of $gcode"
+
+[[ -n "$effective" ]] || fail \
+    "no M140/M190 target is in force when the first extrusion starts — the bed is cold"
+awk -v a="$effective" -v b="$expect" 'BEGIN{exit !(a+0 == b+0)}' || fail \
+    "header says ${bed_temp}C but the bed target in force at first extrusion is ${effective}C — the G-code body wins"
 
 # 3. Optional: the sliced material must match what is actually loaded. Pass the
 #    value read from the printer, not a value typed by a human.
