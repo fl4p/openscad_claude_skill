@@ -85,6 +85,46 @@ Only stop and ask when a missing number makes the part **meaningless** rather th
 wrong — you cannot invent the diameter of the tube a holder has to hold. One question, then
 proceed.
 
+⚠️ **That licence to guess covers design choices ONLY.** There are two kinds of number and
+they have opposite rules:
+
+| Kind | Example | Guess? |
+|---|---|---|
+| **Design choice** | wall 2mm, corner radius, brim width, how tall the stand is | **Yes.** The user has no better answer than you; a wrong guess is cheap to fix on screen. |
+| **Interface dimension to a part that already exists** | where the active area sits on a PCB, hole spacing, connector height, board thickness | **Never.** The object is in the user's hand, the number takes ten seconds with a caliper, and being wrong costs a whole print. |
+
+An interface dimension is not "merely wrong" when guessed — the part fits, screws together,
+and is silently misaligned. You find out an hour into a print.
+
+**If you cannot download the source — ask. Every time.** A datasheet, drawing or spec page
+you could not fetch is never grounds to invent the number.
+
+1. **A non-200 means BLOCKED, not absent.** `WebFetch` returning 403/402 is a WAF rejecting
+   its User-Agent. Escalate before concluding anything: UA-corrected `curl` first, then the
+   asset/media host rather than `www` (WAFs are per-hostname), then Playwright, then
+   `search_rag_context`. Full playbook: `~/.claude/skills/kicad-design/SETUP.md`
+   §*Getting the PDF: vendor WAFs* — it is cross-cutting, not datasheet-specific.
+2. **Only when that is genuinely exhausted**, say so plainly and ask for a measurement.
+   Name the reference edge and the feature: "from the −X board edge to the near edge of the
+   white active area", never "can you check the dimensions".
+
+**Make the gap structural, not a comment.** A flagged assumption still gets printed — being
+labelled `// ASSUMED` in the source and listed in the README stops nothing. Leave the value
+`undef` so the render refuses in seconds:
+
+```openscad
+active_x0 = undef;   // MEASURE: PCB -X edge -> near edge of the white active area
+assert(!is_undef(active_x0),
+       "UNMEASURED: active_x0 — measure PCB -X edge to the active area's near edge");
+```
+
+Use `-D 'active_x0=5.36'` for a deliberately provisional render. The default state must be
+refusal, not a plausible number.
+
+**Do not derive an interface dimension from guesses.** `active_x0 = panel_x0 + (panel_w -
+active_w)/2` turns two invented inputs into a two-decimal result that reads as computed.
+Prefer one directly measured input over a chain that launders guesses into authority.
+
 ### Step 2: Start from the library, not from an empty file
 
 ```bash
