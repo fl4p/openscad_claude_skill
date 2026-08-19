@@ -39,6 +39,11 @@ to spend that time only where it buys something.
 - **Printer profile**: `~/.claude/skills/openscad/templates/printer-profile.scad` — the
   measured behaviour of the actual printer. Read it before emitting any part whose function
   depends on a fit, and say out loud when `profile_measured` is still false.
+- **Two different fit problems, two different templates.** `calibration-comb.scad`
+  varies the HOLE against a fixed pin, to characterise the printer once.
+  `fit-ladder.scad` varies the PIN against a fixed hole, for mating to a part
+  that already exists and cannot be changed. See *Fitting to a part that already
+  exists* below — that case has its own rules and it is the one that bites.
 - **Language reference**: `~/.claude/skills/openscad/references/`
 
 ## Modes
@@ -1012,6 +1017,8 @@ All scripts live in `~/.claude/skills/openscad/scripts/`:
 | `openscad-validate.sh` | Strict validation with categorized error output |
 | `openscad-stl-analyze.sh` | STL mesh analysis: bbox, cross-sections, gap detection |
 | `openscad-stl-compare.sh` | Mesh comparison: boolean diff, volume delta, accuracy % |
+| `openscad-stl-bore.py` | Recover the NOMINAL diameter of a round feature from a shipped STL — what a part you already printed actually measures, when the source has moved on |
+| `openscad-slice-check.sh` | Assert a sliced G-code matches the physical plate and filament |
 | `openscad-stl-reconstruct.sh` | Automated STL analysis: profiles, primitives, CSG inference |
 | `openscad-sdf-optimize.py` | SDF-based parameter optimizer (IoU scoring, no OpenSCAD in loop) |
 | `openscad-adaptive-slice.py` | Adaptive multi-axis slicing (coarse→transitions→fine on X,Y,Z) |
@@ -1104,6 +1111,79 @@ module main_assembly() {
 - **Tolerance chains**: Define a single `fit_clearance` parameter and derive all clearances from it
 - **Assert validation**: Use `assert()` to validate parameters: `assert(wall >= 1.2)`, `assert(boss_d > hole_d + 2*wall)`
 - **Profile-first**: Use `offset(r=corner_r)` on 2D `polygon()` instead of `hull()` with 3D cylinders
+
+### Fitting to a part that already exists
+
+The moment one half of a mating pair has been printed, the problem stops being
+"choose a clearance" and becomes "hit a dimension that is already fixed". Four
+rules, each of which cost a print cycle to learn:
+
+**1. The printed part's interface is FROZEN. Adjust the other half.**
+Interference can be taken out of the pin or out of the hole — arithmetically
+identical for a matched pair printed together, and *useless* if the hole is
+already sitting on the bench. Put the adjustment on the half you are about to
+print, and say so in the source, because the next edit will not remember:
+
+```openscad
+// FROZEN: this is what the shell ON THE BENCH was printed with (commit 72bb89e),
+// verified by measuring the shipped STL. Changing it orphans a printed part.
+spigot_socket_d = 4.95;
+spigot_d = spigot_socket_d + spigot_press;   // every adjustment lands here
+```
+
+Prefer freezing the dimension of the part that is **expensive to reprint** — a
+3-hour shell outranks a 3-minute pin.
+
+**2. Measure the shipped STL, not the .scad.**
+The source describes the part you are *about to* print; it has moved on since the
+one you printed. Read the artifact:
+
+```bash
+python3 ~/.claude/skills/openscad/scripts/openscad-stl-bore.py \
+        output/shell.stl --at 25.9,18.4 --max-r 6
+```
+
+OpenSCAD inscribes its polygons, so the largest vertex radius **is** the nominal
+radius to full precision — this recovers design intent exactly, not an estimate.
+Measured cost of skipping it: a socket the source called Ø4.60 and the printed
+part had at Ø4.95, a 0.35 mm error in the one dimension that mattered.
+
+Do not compare two renders by `md5` or by volume to decide whether geometry
+changed — a `$fn` difference alone moves both. Compare the bounding box and the
+specific feature, or use `openscad-stl-compare.sh`.
+
+**3. A test coupon must vary exactly ONE thing, from a verified baseline.**
+A coupon that shrinks the hole *and* grows the pin cannot tell you which one was
+wrong when it seizes; its failure carries no information. Reproduce the real
+feature exactly — same diameters, same engagement depth, same print orientation,
+same shoulder — and change one number across the samples.
+
+**4. Anchor the ladder on MEASURED endpoints, not on the nominal.**
+A ladder must straddle the answer: one rung you expect to fail *loose*, one you
+expect to fail *tight*. Otherwise every sample fails the same way and a whole
+print returns a single bit — "all too tight" — which you could have predicted.
+
+The nominal diameter is not an anchor. It is exactly the number that misleads
+here, because the bore prints undersize while the pin prints oversize and the
+two errors add: a pin 0.05 *under* a Ø4.95 nominal bore would not enter it.
+Measured cost: a ladder spanning nominal −0.05…+0.10 in which all four rungs
+bound, while the datum that would have placed it correctly — an earlier pin at
+4.60 that was *loose in that same hole* — was already in hand and unused.
+
+So before choosing rungs, write down the two endpoints you actually know:
+```
+4.60  LOOSE          (measured: the as-printed part)
+4.90  WILL NOT ENTER (measured: ladder 1, rung 1)
+```
+and put the rungs inside them. If you only have one endpoint, make the far rung
+deliberately extreme to establish the other — an unbracketed ladder is a guess
+with four decimal places.
+
+Label the samples: at 0.05 mm apart they are identical to the eye, and an
+unlabelled winner teaches nothing. **Continue the numbering across ladders**
+(5,6,7,8 after 1,2,3,4) — both sets end up in the same drawer, and two pucks
+stamped "1" is a measurement waiting to be misattributed.
+`templates/fit-ladder.scad` does all of this.
 
 ### Common Patterns
 

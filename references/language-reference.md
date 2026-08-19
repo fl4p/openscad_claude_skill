@@ -186,3 +186,33 @@ version()                                  // OpenSCAD version string
 - **Comments**: explain the "why", dimensions in mm
 - **Print orientation**: think about which face goes on the build plate
 - **Manifold check**: all boolean operands must overlap; no coincident faces
+
+## Traps that cost a debugging round
+
+**A `module` inside an if/else-if chain silently breaks the chain.** Module
+definitions are hoisted, so it is tempting to define one next to the branch that
+uses it. Syntactically it severs the `}` from the following `else`:
+
+```openscad
+else if (part == "shell") shell();
+module helper() { ... }              // <-- the chain ends HERE
+else if (part == "test") test();     // syntax error, or a dead branch
+```
+Define every module above the dispatch block, never inside it.
+
+**A failed `assert()` writes no file but still exits 0.** OpenSCAD prints
+`ERROR: Assertion ... failed`, emits "Current top level object is empty", and
+returns success. Neither `set -e` nor `$?` will catch it, so a build script that
+trusts the exit code happily ships the *previous* STL. Check that the output file
+was written and is newer than the source, or use `openscad-validate.sh` and read
+its `Category:` line (`ASSERTION_FAILED`).
+
+**Cylinder meshes carry vertices only at their end rings.** Probing an exported
+STL for "vertices between z=5 and z=8" finds nothing in the middle of a cylinder
+that spans 4.5 to 9.5 — the surface there is interpolated across tall triangles.
+Select by the feature's end planes, not by a band through its middle.
+
+**Polygons are inscribed, so a circle's max vertex radius is exactly nominal.**
+Useful: it lets you recover a design dimension from a mesh to full precision
+(`scripts/openscad-stl-bore.py`). Also a warning: the actual *material* is
+`r*cos(pi/$fn)` inward of that, so a low-`$fn` hole is tighter than it looks.

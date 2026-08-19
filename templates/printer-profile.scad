@@ -31,17 +31,31 @@
 
 // --- Provenance -----------------------------------------------------------
 profile_measured = false;          // set true only after the comb is printed and measured
-profile_printer  = "non dichiarata";
+profile_printer  = "Bambu Lab P1P";
 profile_filament = "";             // clearances differ per material: PLA != PETG != ABS
 profile_nozzle   = 0.4;
 profile_date     = "";             // YYYY-MM-DD of the measurement
 
 // --- Clearances (mm added to a hole diameter to reach the wanted fit) -----
 // Measured as: hole_that_worked - 6.00
-clearance_press  = 0.15;
-clearance_close  = 0.25;
-clearance_slide  = 0.30;
-clearance_loose  = 0.40;
+//
+// PARTIAL CALIBRATION, 2026-08-16. The comb has NOT been printed, so
+// profile_measured stays false and close/slide/loose below are still declared
+// defaults. What HAS been measured on this machine is a single press fit:
+//
+//   PLA, 0.4 nozzle, 0.20 mm layers, textured PEI
+//   Ø4.95 nominal bore, 5.3 mm deep, hole axis vertical, pin printed upright
+//   pin ladder 4.65 / 4.72 / 4.79 / 4.86
+//     -> 4.79 firm to seat and separable with deliberate force
+//        4.86 and above too tight; 4.90 would not enter; 4.60 loose
+//   => press clearance = 4.95 - 4.79 = 0.16
+//
+// One diameter, one orientation, one material. It does not license the other
+// three fits and it says nothing about xy_expansion -- print the comb for those.
+clearance_press  = 0.16;   // MEASURED (above)
+clearance_close  = 0.25;   // declared default, unmeasured
+clearance_slide  = 0.30;   // declared default, unmeasured
+clearance_loose  = 0.40;   // declared default, unmeasured
 
 // --- Horizontal expansion -------------------------------------------------
 // How much wider the printer makes a part than the model says, per side.
@@ -54,4 +68,4 @@ xy_expansion = 0.00;
 min_wall        = 1.2;   // thinnest wall that survives FDM
 min_floor       = 0.8;
 max_overhang    = 45;    // degrees from vertical, beyond which support is needed
-bed_size        = [220, 220, 250];   // declared, not verified
+bed_size        = [256, 256, 256];   // Bambu Lab P1P build volume
