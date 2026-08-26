@@ -17,3 +17,7 @@ Thumbs.db
 
 # Scratch fixtures created by review agents running in this tree
 .review-tmp/
+
+# Python bytecode
+__pycache__/
+*.pyc
