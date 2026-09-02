@@ -248,7 +248,9 @@ fit_clearance("loose");   // 0.40mm
 
 - **Wall thickness**: min 1.2mm (FDM with 0.4mm nozzle)
 - **Clearance**: 0.2-0.3mm for fitting parts
-- **Overhangs**: < 45° from vertical; prefer chamfers on downward faces
+- **Overhangs**: < 45° from vertical; prefer chamfers on downward faces. Verify with
+  `scripts/openscad-overhang-audit.py part.stl` — a chamfered *root* does not make a
+  cantilever printable, and only the mesh knows which is which.
 - **Epsilon** (`eps = 0.01`) in all boolean operations
 - **Flat bottoms** for bed adhesion
 - **`assert()`** for self-validating parametric models

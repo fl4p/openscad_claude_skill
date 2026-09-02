@@ -182,8 +182,27 @@ echo(str("Outer: ", outer_w, " x ", outer_h, " x ", total_h, " mm"));
 ```
 
 Then read the `ECHO:` lines back and confirm the bounding box matches the dimensions the user
-actually gave. Overhangs are not derivable this way — either keep them self-supporting by
-construction (45° chamfers, tapers) or say out loud that support is required.
+actually gave. Overhangs are not derivable from the `.scad` — but they **are** derivable from
+the mesh, so derive them; do not assert them:
+
+```sh
+scripts/openscad-overhang-audit.py part.stl --min-area=15
+```
+
+It lists every down-facing face steeper than 45°, its area, and what is under it, and splits
+them into two kinds that are **not** interchangeable:
+
+| kind | what it is | what fixes it |
+|---|---|---|
+| pocket roof | solid material below it, anchored on two sides | bridges, if its short span is under ~10 mm |
+| **cantilever** | nothing below it at all | **support material, or a different design** |
+
+A 45° ramp off a wall only fixes an arm's **root**. From the top of that ramp out to the tip
+the underside is flat and unanchored, and that part droops — a 6 × 7 mm arm on a beautiful
+45° gusset is still a 7 mm cantilever. If the empty space under a feature is there on purpose
+(a board, a cavity, a wire run), no amount of chamfering will reach a second anchor, and the
+honest answer is to slice with support. Run the audit **before** slicing and say which rows
+you are choosing to support.
 
 ⚠️ `openscad-validate.sh` is a **report, not a gate**. Read the `Category:` line — `OK` passes,
 anything else stops the part here:
@@ -1100,7 +1119,9 @@ module main_assembly() {
 
 - **Wall thickness**: minimum 1.2mm for FDM (2-3 perimeters with 0.4mm nozzle)
 - **Tolerance**: 0.2-0.3mm clearance for fitting parts together (peg-in-hole, snap fits)
-- **Overhangs**: keep below 45 degrees from vertical, or add supports in design
+- **Overhangs**: keep below 45 degrees from vertical, or add support — and decide which
+  from `openscad-overhang-audit.py`, not by eye. A 45 degree gusset fixes a cantilever's
+  root, never its tip.
 - **Chamfer vs fillet**: prefer chamfers on downward-facing surfaces (avoids supports); use fillets on top surfaces
 - **Bridging**: max ~10mm unsupported spans
 - **First layer**: design flat bottoms for bed adhesion; largest flat surface on build plate
