@@ -189,20 +189,27 @@ the mesh, so derive them; do not assert them:
 scripts/openscad-overhang-audit.py part.stl --min-area=15
 ```
 
-It lists every down-facing face steeper than 45°, its area, and what is under it, and splits
-them into two kinds that are **not** interchangeable:
+It lists every down-facing face within 45° of horizontal, its area, its footprint, and whether
+anything is under it. Read it as **evidence, not a verdict**:
 
-| kind | what it is | what fixes it |
-|---|---|---|
-| pocket roof | solid material below it, anchored on two sides | bridges, if its short span is under ~10 mm |
-| **cantilever** | nothing below it at all | **support material, or a different design** |
+| row | what it means |
+|---|---|
+| **NOTHING under part of it** | there is no second anchor to bridge to. Support, or redesign. |
+| material N mm below | *undecided.* It may be a pocket roof that bridges — or a one-sided shelf floating above an unrelated floor. The tool does not compute anchor topology. Look at the sliced preview. |
 
-A 45° ramp off a wall only fixes an arm's **root**. From the top of that ramp out to the tip
-the underside is flat and unanchored, and that part droops — a 6 × 7 mm arm on a beautiful
-45° gusset is still a 7 mm cantilever. If the empty space under a feature is there on purpose
-(a board, a cavity, a wire run), no amount of chamfering will reach a second anchor, and the
-honest answer is to slice with support. Run the audit **before** slicing and say which rows
-you are choosing to support.
+The audit runs on the mesh in **model coordinates** and knows nothing about placement, cooling,
+speed or support settings. A slicer rotation about X or Y invalidates every row. It never says
+a part is fine, and neither should you on its evidence alone — confirm in the sliced toolpaths.
+
+What it is for is the mistake it was written after: **a root gusset does not support a residual
+horizontal underside.** A 45° ramp off a wall that stops short of the tip leaves the flat from
+the top of the ramp to the tip anchored on one side, and that flat droops — a 6 × 7 mm arm on a
+beautiful 45° gusset still has a 7 mm one-sided ledge. The fixes, in order of preference:
+carry the ramp all the way to the tip; taper the feature so there is no flat at all; anchor the
+tip to a second wall so it is a real bridge; reorient the part; split it. Only when the empty
+space under the feature is *deliberate* — a board, a cavity, a wire run — is there no second
+anchor to reach, and then support is the answer. Say which rows you are choosing to support,
+and check that the support is removable from where it lands.
 
 ⚠️ `openscad-validate.sh` is a **report, not a gate**. Read the `Category:` line — `OK` passes,
 anything else stops the part here:
@@ -1119,9 +1126,9 @@ module main_assembly() {
 
 - **Wall thickness**: minimum 1.2mm for FDM (2-3 perimeters with 0.4mm nozzle)
 - **Tolerance**: 0.2-0.3mm clearance for fitting parts together (peg-in-hole, snap fits)
-- **Overhangs**: keep below 45 degrees from vertical, or add support — and decide which
-  from `openscad-overhang-audit.py`, not by eye. A 45 degree gusset fixes a cantilever's
-  root, never its tip.
+- **Overhangs**: keep below 45 degrees from vertical, or add support. Get the evidence from
+  `openscad-overhang-audit.py` and the verdict from the sliced preview — a root gusset does
+  not support a residual horizontal underside.
 - **Chamfer vs fillet**: prefer chamfers on downward-facing surfaces (avoids supports); use fillets on top surfaces
 - **Bridging**: max ~10mm unsupported spans
 - **First layer**: design flat bottoms for bed adhesion; largest flat surface on build plate
