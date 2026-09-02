@@ -211,6 +211,42 @@ space under the feature is *deliberate* — a board, a cavity, a wire run — is
 anchor to reach, and then support is the answer. Say which rows you are choosing to support,
 and check that the support is removable from where it lands.
 
+**Then size it.** "That looks like a lot of support" is answerable with a number:
+
+```sh
+scripts/openscad-gcode-feature-volume.py plate.gcode
+```
+
+It splits the sliced extrusion by feature type, so a support setting's cost is visible before
+the print. Measured on a 127 × 92 × 28 mm frame with seven unanchored ceilings:
+
+| `support_style` | support | share of the print | time |
+|---|---|---|---|
+| `grid` (default) | 15.07 cm³ | 23.8 % | 2 h 14 m |
+| `snug` | 8.37 cm³ | 14.8 % | 2 h 01 m |
+| `tree(auto)` | 14.69 cm³ | 23.3 % | 2 h 14 m |
+
+`snug` follows each overhang's own footprint instead of dropping a prism from it, and on a part
+whose overhangs are small and scattered that halved it for nothing — same coverage, 13 minutes
+saved. `support_base_pattern_spacing` and `support_threshold_angle` moved it by under 1 cm³ by
+comparison: once the body is snug, what is left is mostly interface and support walls, so widen
+the spacing for a little more and stop there. Tree helps organic shapes, not flat ledges.
+
+Two settings matter more than the density:
+
+- **`bridge_no_support = 1`.** Otherwise the slicer packs support into every blind nut trap and
+  downward-opening pocket, where it cannot be dug out and no nut will seat. Anything anchored on
+  two sides and under `max_bridge_length` then bridges instead. Check the resolved
+  `max_bridge_length` in the sliced 3mf rather than trusting a profile's documented default —
+  the inheritance chain does not always give you what the vendor page says.
+- **`support_top_z_distance`** at one layer height. Less and it welds on; more and the first
+  layer over it droops anyway.
+
+After trimming, **re-verify coverage** — a lighter setting can quietly stop reaching a feature.
+Parse the sliced G-code for `Support` extrusions in the layers just below each ceiling you care
+about, in that ceiling's own footprint. Trimming support by 45 % is only good news if every row
+the audit flagged still has something under it.
+
 ⚠️ `openscad-validate.sh` is a **report, not a gate**. Read the `Category:` line — `OK` passes,
 anything else stops the part here:
 
