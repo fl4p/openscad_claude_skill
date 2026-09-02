@@ -108,7 +108,11 @@ def main(argv):
         if n[2] > nz_max:
             continue
         z = round(min(p[2] for p in v), 1)
-        if abs(z - zmin) < 0.05:              # the face lying ON the bed
+        # The bed face is exempt -- but ONLY if the WHOLE facet lies on the bed.
+        # Testing the minimum vertex alone discards any face that merely touches
+        # z_min while rising away from it, which is how a 100 x 10 mm underside
+        # climbing from 0 to 10 mm reported nothing at all.
+        if all(abs(p[2] - zmin) < 0.05 for p in v):
             continue
         g = groups[z]
         g[0] += a
@@ -131,7 +135,7 @@ def main(argv):
                  for c in cs]
         span = min(x1 - x0, y1 - y0)
         if max(drops) > 1e8:
-            kind = "NOTHING under part of it -> SUPPORT"
+            kind = "no upward surface below part of it -> SUPPORT or a bridge"
             unanchored += a
         else:
             kind = (f"material {min(drops):.1f}-{max(drops):.1f} mm below, "
@@ -139,8 +143,12 @@ def main(argv):
             roofed += a
         print(f"{z:7.1f} {a:8.1f}  {x0:6.1f}..{x1:6.1f} {y0:6.1f}..{y1:6.1f}  {kind}")
 
-    print(f"\n{unanchored:.0f} mm2 has nothing under it -- that cannot bridge, it "
-          f"needs support or a redesign.")
+    print(f"\n{unanchored:.0f} mm2 has no upward-facing surface below it.")
+    print("  This tool sees only what is DIRECTLY BELOW a face.  It does not "
+          "detect\n  lateral anchors, so it cannot tell a cantilever (one "
+          "anchor -- needs\n  support) from a roof spanning two walls (bridges "
+          "fine).  Both land here.\n  Decide which by looking at the model or "
+          "the sliced preview.")
     print(f"{roofed:.0f} mm2 has material below; whether those anchor a bridge is "
           f"NOT decided here -- read the slicer preview.")
     if omitted:
