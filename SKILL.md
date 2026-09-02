@@ -156,10 +156,24 @@ export OPENSCADPATH=~/.claude/skills/openscad/templates
 `snap_strain_max` in the printer profile (PLA 1.5 %). `snap_tab` and `push_pin` assert on it,
 because **L is squared**: a clip a little too short is not a little weak, it is broken. The
 library's own former default — `length=6, thick=1.5, overhang=0.8` — computed to 5 % and would
-snap off a PLA part on first assembly; it needed L = 11 mm. Do not eyeball this, and do not
-hand-compute the finger thickness either: for a split cylinder it is `(shaft − slot)/2`, and a
-hand-written estimate of that quietly cost 0.17 percentage points on a real part until the
-assert caught it.
+snap off a PLA part on first assembly; it needed L = 11 mm.
+
+Do not eyeball this, and **mind which section you are in**. `3yt/(2L²)` is the RECTANGULAR
+form: it is `3yc/L²` with `c = t/2`, which holds only when the neutral axis sits at mid
+thickness. A cylinder split by a slot leaves each finger a circular **segment**, whose
+neutral axis sits toward the flat, so `c > t/2` and the rectangular form understates strain —
+by 0.30 points on the pin below (1.72 % against the true 2.02 %). Use `seg_c_out(shaft_d,
+slot_w)` and `3yc/L²` for anything split, and let the assert do it rather than hand-computing.
+
+Both forms are **prismatic**: they assume the section is constant along `L`. For a tapered
+slot `I(x)` and `c(x)` vary, the peak strain need not sit at the root, and evaluating at the
+root is a conservative heuristic, not a derivation.
+
+**Prefer a press fit when the joint does not have to come apart.** A stepped solid pin —
+small through the part's hole, interference into the frame bore — has no finger, so no thin
+section, no bending across layer interfaces, and no strain budget to blow. `press_pin` does
+this and is the right default at small diameters; `push_pin` earns its slot only when the
+joint gets opened again. Interference is not derivable from the profile: print the sweep.
 
 **A moulded snap post can only be entered from directly above.** If the mating part slides,
 hinges, or drops in at an offset, a post standing in its mounting hole is impossible no matter
@@ -251,47 +265,84 @@ both edges:
 finger thickness = (shaft - slot) / 2  =  (3.0 - 2.0) / 2  =  0.50 mm  =  1.25 nozzles
 ```
 
-One extrusion line per layer, with nothing to bond to sideways. The G-code says it
-outright — count extruding moves per layer:
+One extrusion line per layer. The G-code says it outright — count extruding moves per
+layer, per part:
 
-| revision | slot | thinnest finger | moves / pin / layer |
+| revision | slot | segment depth | moves / pin / layer |
 |---|---|---|---|
 | tapered  | 1.6 → 2.0 | 0.50 mm = 1.25 lines | **4** |
 | parallel | 1.2 flat  | 0.90 mm = 2.25 lines | **24–29** |
+| press fit, no slot | — | solid | **44–66** |
+
+*Why* a single line fails is **not** established — vase mode is single-width and bonds
+fine, so "nothing to bond to sideways" is not the mechanism. What the table is, is a
+threshold with a known-bad below it and a known-good above it. That is enough for a
+screening gate and it is all it claims. The transition is not located: nothing was
+printed between 0.50 and 0.90 mm.
 
 **Rules that fall out of it:**
 
 - **Check the thinnest station, not the nominal size.** A tapered slot, a draft angle, a
-  fillet running out — the tip decides. The nominal 0.7 mm above was never the number
-  that mattered.
-- **A taper is the textbook fix for bending stress and the wrong fix here.** It removes
-  material exactly where a segment is already thinnest. Prefer a parallel slot and buy
-  the stress margin from length instead.
+  fillet running out, *a lead-in cone* — whichever is thinnest decides. Rev 2 fixed the
+  shaft to 0.90 mm and still printed brittle, because the barb cone necked the tip back
+  to 0.50 mm. The gate was measuring a station that was no longer the worst one.
+- **A taper is a legitimate technique; running under the print floor is the defect.**
+  Reject an under-floor taper, not tapering. And know what the parallel slot costs:
+  thickening the finger *raises* strain (1.582 → 2.023 % here) and raises insertion force.
 - **`min_wall` is not `min_rib`.** A wall is fought over its area; a rib or finger is
   narrow in one direction and the slicer must fill it with whole lines. Two lines is the
-  floor — one line has no sideways neighbour to weld to. Three for anything load-bearing.
+  screening floor, three for anything load-bearing. Note this is a policy split, not a
+  slicer-level distinction — the slicer does not know which of your features is a wall.
 - **Prepare shows a shape; Preview shows what will exist.** They disagree exactly when it
   matters. If a feature is anywhere near the nozzle width, open the sliced preview and
   look at that layer, or count the moves.
 
 **The gate, and it is cheap:**
 
-```sh
-# per-layer extruding moves; a feature that collapses to single lines shows up as
-# a layer count that does not scale with the number of parts on the plate
-grep -c 'G1.*E' plate.gcode        # crude but decisive when the number is 4
+Track Z, bucket the extruding moves by layer, and split them across the parts on the
+plate. A whole-file `grep -c` will not do it — it counts every move in the print, and a
+`G1` is a straight toolpath segment rather than an "extrusion line", so the number is only
+ever a relative signal between revisions of the same plate.
+
+```python
+# extruding moves per layer, split into 10 mm bands = one part each
+import re, collections
+x = y = None; z = 0.0; layers = collections.defaultdict(list)
+for ln in open('plate_1.gcode'):
+    if not ln.startswith(('G1', 'G0')): continue
+    d = dict(re.findall(r'([XYZE])(-?[\d.]+)', ln))
+    if 'Z' in d: z = float(d['Z'])
+    nx = float(d.get('X', x if x is not None else 'nan'))
+    ny = float(d.get('Y', y if y is not None else 'nan'))
+    if 'E' in d and float(d['E']) > 0 and x is not None and (nx, ny) != (x, y):
+        layers[round(z, 2)].append((x, y))
+    x, y = nx, ny
+for z in sorted(layers):
+    xs = [p[0] for p in layers[z]]; x0 = min(xs)
+    print(z, len(layers[z]), collections.Counter(int((p[0]-x0)//10) for p in layers[z]))
 ```
 
 Better, put it in the model where it aborts the render — `printable-lib.scad` now gates
 `push_pin` on exactly this, and reports the failure in extrusion widths rather than mm,
 because "0.5 mm" reads as a dimension while "1.25 extrusion widths" reads as a verdict.
 
-**And know when the answer is "not at this size".** Thickening a snap finger to make it
-printable *raises* its strain, because `ε = 3yt/2L²` is linear in `t`. At a 3.2 mm hole
-with 5.6 mm of grip there is no slot width that is both ≥ 2 lines thick and under PLA's
-1.5 % design strain while still retaining. The only real lever is `L`, which enters
-squared. When two constraints have no overlap, say so and change the mechanism — a
-longer flexure, a two-piece drive rivet, or a screw — instead of tuning between them.
+**Two printability constraints can pull against each other.** Thickening a snap finger to
+make it printable *raises* its strain, because `ε` is linear in `t`. At a 3.2 mm hole with
+5.6 mm of grip, no slot width is simultaneously ≥ 2 lines thick, under PLA's 1.5 % handbook
+strain, and retaining. `L` is the strongest lever because it enters squared — but it is not
+the only one, and saying so once cost a working design. `y`, the barb diameter, the section
+shape, the number of fingers, the print orientation and the material are all live, and the
+cheapest lever of all is often **deleting the flexure**: a press fit has no finger and
+therefore no strain budget to satisfy.
+
+**Before concluding a mechanism is dead, check that the constraint is real.** The pin above
+was declared infeasible on exactly this arithmetic. It was not infeasible; the model had an
+arbitrary neck in the barb cone (`d2 = shaft_d - 2*y`) putting a 0.50 mm section at the free
+end, and the 1.5 % ceiling is a handbook figure for *moulded* stock being applied to printed
+PLA loaded across its layers. Two bad inputs, one confident "no solution exists". An empty
+feasible set is a claim about your constraints before it is a claim about the world — so
+name each constraint and say where it came from, and treat "not at this size" as the
+conclusion you reach after that audit, not instead of it.
 
 **Then size it.** "That looks like a lot of support" is answerable with a number:
 
@@ -368,6 +419,117 @@ an unrecognised state land on `OK`.
 
 A part that fails here never reaches the render. The eye is for shape; these are arithmetic,
 and arithmetic should not cost a vision call.
+
+### The orientation you model in is not the orientation it prints in
+
+A part that has to be *checked* against an assembly must be modelled in assembly
+coordinates — that is the only way an `intersection()` with the things it must clear
+means anything. Nothing about that orientation makes it printable, and the slicer step in
+this pipeline will not fix it: OrcaSlicer's `--arrange` places and rotates in XY only, and
+will happily lay a lid down as a roof over its own air. (It does have a separate `--orient`
+that rolls parts; the point is that arranging is not orienting, and a pipeline that calls
+only the first gets no say in which face lands on the bed.)
+
+Measured 2026-09-02, one 127 × 92 mm lid, 2.0 mm plate on an 8.3 mm skirt:
+
+| orientation | unsupported down-facing area | support |
+|---|---|---|
+| as modelled (assembly) | 10,713 mm² down-facing, 8.3 mm up | everywhere |
+| rolled 180° onto its roof | **94.9 mm²** — 89.9 of it four counterbore ledges, each a 1.5 mm annulus over a Ø6.4 pocket | **none** |
+
+Keep both, in one file, and let a flag pick:
+
+```openscad
+print_orient = false;    // -D print_orient=true for the STL the slicer takes
+
+if (cap_check >= 0) intersection() { cap(); cap_obstacle(cap_check); }
+else if (print_orient) translate([0, 0, cap_top]) rotate([180, 0, 0]) cap();
+else { cap(); if (show_frame) stack_frame(); }
+```
+
+Then `openscad -o cap.stl cap.scad -D print_orient=true` in the export script, so the
+STL on disk is always the printable one and the gates always see assembly coordinates.
+
+`cap_top` there is the part's own derived top, **not** a literal: the roll has to land
+the part on z = 0, and re-typing that number is how a model silently decouples from
+itself the next time a level moves. Re-run the overhang audit after the roll — it is a
+different part as far as gravity is concerned.
+
+### A thickness is not an amount of material
+
+`wall = 2.0` is a wall-to-wall dimension. What fills it is some solid skins and some
+lattice, and the split is decided by the slicer, not by the model. Ask the sliced file:
+
+```sh
+scripts/openscad-gcode-feature-volume.py plate.gcode --by-layer
+```
+
+The same 2.0 mm lid ceiling, ten layers at 0.20 mm:
+
+```
+  z=  0.20    2.30 cm3   Bottom surface 2.18        <- solid
+  z=  0.40    2.26        Internal solid infill     <- solid
+  z=  0.60    2.26        Internal solid infill     <- solid
+  z=  0.80    0.30        Sparse infill 10%
+  z=  1.00    0.30        Sparse infill 10%
+  z=  1.20    0.30        Sparse infill 10%
+  z=  1.40    0.32        Sparse infill 10%
+  z=  1.60    3.11        Internal Bridge           <- solid
+  z=  1.80    2.25        Internal solid infill     <- solid
+  z=  2.00    2.25        Top surface               <- solid
+```
+
+Six solid layers, four of lattice: 1.2 mm of solid PLA in two skins with 0.8 mm of foam
+between them. Commanded filament volume over CAD envelope volume is 68 % — which is a
+material-budget ratio, not a measured porosity. If you needed 2 mm of material, you did not
+get it.
+
+Two things that table teaches, both of which change how you *pick* a thickness:
+
+- **The layer that closes over sparse infill is a double-height layer.** 3.11 cm³ against
+  2.25 for an ordinary solid layer, about 1.4×. The tempting explanation — a wider line, or
+  a flow multiplier — is wrong on both counts: `internal_bridge_flow = 1`, and the feature
+  block declares `; LINE_WIDTH: 0.4`, *narrower* than the 0.45 everything else uses. What it
+  also declares is `; LAYER_HEIGHT: 0.4` on a 0.2 mm layer grid. Orca's thick-internal-bridge
+  course reaches down into the void it is spanning, so it deposits two layers' worth of
+  material in one z step. You pay it at any infill under 100 %, which makes the marginal
+  saving from dropping infill smaller than it looks.
+
+  The general lesson is the method, not the number: **read the feature block, do not
+  reconstruct it.** Orca emits a resolved `; LINE_WIDTH:` and `; LAYER_HEIGHT:` before every
+  feature in the body — which is where they live, since the *profile's* `*_line_width` keys
+  read `0` (auto) and tell you nothing. Backing width out of the toolpaths as
+  `E·A_filament / (layer_height · path_length)` does not recover them; it silently answers a
+  different question, giving 0.399 mm where the slicer says 0.45. That gap is not error, it
+  is definition: the formula returns the width of an equivalent *rectangle*, while the
+  slicer means a bead with rounded sides, and the profile's 0.98 flow ratio sits on top.
+  (0.45 × 0.2 − 0.2²(1−π/4) = 0.0814 mm², ÷ 0.2 × 0.98 = 0.399. The two agree exactly once
+  you know they are different quantities.) Reconstructing a number the file already states
+  is how you end up publishing the wrong one.
+- **Size a wall to a whole number of extrusion lines and it has no inside.** The skirt at
+  1.8 mm is exactly four 0.45 mm perimeters, and slices as four perimeters and nothing else.
+  It is the constructive twin of the `min_rib` floor — that one says *never fewer than two
+  lines*, this one says *land on a whole number of them*.
+
+  Two cautions on reading that off a per-layer table. The rows hide features under
+  0.01 cm³, so a row showing only walls is not proof the layer is only walls — the skirt-only
+  layers here also carry ~0.007 cm³ of sparse infill inside the bolt bosses. And the rule
+  holds only while the slicer can absorb your dimension into the same path count: Arachne
+  varies perimeter width to fill what you asked for, so nearby thicknesses cost weight
+  without changing path count, but go far enough and the count, the gap fill and the
+  stiffness all change together. Land near a whole number; do not extrapolate a trend from
+  it.
+
+**Do not inherit a structural constant into a part that carries nothing.** The lid's skirt
+began at `wall_t = 3.5`, `include`d from the frame it bolts to, where 3.5 mm is a load path.
+A lid's skirt is a stiffening flange, and flange depth enters its bending stiffness far more
+steeply than wall thickness does — 8.3 mm of depth is doing the work, so thinning the wall
+is cheap. Three changes together took the part from 28.1 cm³ / 51 min to 22.5 / 39; sliced
+one at a time, infill and top shell account for 3.74 cm³, the 2.5→2.0 mm plate for 0.70, and
+`cap_wall` 3.5→1.8 for **1.16 cm³ and 4½ minutes**. Worth doing, an order of magnitude less
+than the headline — attribute a saving to the lever you actually moved. Sharing a constant is right when the
+*reason* is shared; when only the number is, it over-couples exactly like a copied literal,
+just in the other direction.
 
 ### Step 4: One render, isometric
 

@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Break a sliced G-code down by feature type, in cm3 and percent.
 
-    openscad-gcode-feature-volume.py <plate.gcode> [--dia=1.75]
+    openscad-gcode-feature-volume.py <plate.gcode> [--dia=1.75] [--by-layer]
 
 Written to answer "is that a lot of support?" with a number.  Slicer estimates
 report one total; this splits it, so the cost of a support setting is visible
 before the print rather than after.  Works on any slicer that emits
 `; FEATURE: <name>` (OrcaSlicer, BambuStudio, PrusaSlicer's `;TYPE:` is close
 enough to add if you need it).
+
+`--by-layer` splits the same volume by layer as well, which is how you answer
+"is that 2 mm wall solid material?".  It is not: a nominal thickness is a
+wall-to-wall dimension, and what fills it is some solid skins and some lattice.
+The per-layer table names which is which.
 
 Assumes relative extrusion (M83), which those slicers emit.
 """
@@ -27,7 +32,10 @@ def main(argv):
     # counting only the positive half booked every unretraction as new material.
     # Support travels far more than perimeters do, so the error is not a
     # constant factor and it inflates exactly the number you are measuring.
+    by_layer = "--by-layer" in argv
     feat, e = None, {}
+    z = None                        # layer height, from the slicer's own marker
+    per_layer = defaultdict(lambda: defaultdict(float))
     rel = False                     # G-code's default; M82/M83 override it
     pre = 0                         # E moves seen before any explicit mode
     last = defaultdict(float)       # per-tool absolute E
@@ -38,6 +46,17 @@ def main(argv):
         c = line.split(";")[0].strip() if not line.startswith(";") else ""
         if line.startswith("; FEATURE:"):
             feat = line.split(":", 1)[1].strip()
+            continue
+        # Take the layer from the slicer's marker, never from a G1 Z.  A Z-hop is
+        # also a G1 Z, and on the one plate measured (2026-09-02) the 0.4 mm hop
+        # heights land on other layers' heights, so a mis-attribution would be
+        # silent.  That is a hazard, not an observed bug: on that plate every one
+        # of the 45,961 post-marker deposition moves happened after Z had returned
+        # to the marker height, so the two methods agreed exactly.  The marker is
+        # used anyway because it cannot go wrong, not because raw Z was caught.
+        if line.startswith(("; Z_HEIGHT:", ";Z:")):
+            try: z = float(line.split(":", 1)[1])
+            except ValueError: pass
             continue
         if not c:
             continue
@@ -70,6 +89,13 @@ def main(argv):
                 net = d - pay
                 if net:
                     e[feat] = e.get(feat, 0.0) + net
+                    # "Custom" is dropped from the headline below as purge, so it
+                    # must be dropped here too or the per-layer rows sum to more
+                    # than the total.  On the measured plate all of it preceded
+                    # the first layer marker and z was still None, which hid the
+                    # inconsistency; a mid-print purge would have exposed it.
+                    if z is not None and feat != "Custom":
+                        per_layer[round(z, 3)][feat] += net
     if not e:
         sys.exit(f"{args[0]}: no '; FEATURE:' markers found")
 
@@ -88,6 +114,22 @@ def main(argv):
     if pre:
         print(f"note: {pre} E move(s) before any M82/M83 -- read as absolute "
               f"(the G-code default). Usually the start-G-code purge.")
+    if by_layer:
+        print("\nper layer:")
+        for zz in sorted(per_layer):
+            d = per_layer[zz]
+            tot = sum(d.values())
+            shown = [(k, v) for k, v in sorted(d.items(), key=lambda kv: -kv[1])
+                     if v * per_mm >= 0.01]
+            parts = "  ".join(f"{k} {v*per_mm:.2f}" for k, v in shown)
+            # A row is NOT a list of the features present -- anything under
+            # 0.01 cm3 is hidden while still counting in the row total.  Say so,
+            # or "this layer is only walls" gets read off a row that also had
+            # infill in it.
+            if len(shown) < len(d):
+                parts += f"  (+{len(d)-len(shown)} under 0.01)"
+            print(f"  z={zz:6.2f}  {tot*per_mm:6.2f} cm3   {parts}")
+
     sup = sum(v for k, v in e.items() if k.lower().startswith("support"))
     print(f"\n  total {total*per_mm:.2f} cm3, of which support "
           f"{sup*per_mm:.2f} cm3 ({100*sup/total:.1f}%)")

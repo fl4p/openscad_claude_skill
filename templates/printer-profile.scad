@@ -74,10 +74,53 @@ min_wall        = 1.2;   // thinnest WALL that survives FDM
 // thickest, tapering to zero at its edges, sliced to ONE extrusion per layer
 // and printed as a stack of loose rings -- a coil, not a beam.
 //
-// Two lines is the floor: one line has nothing to bond to sideways.  Anything
-// load-bearing wants three.  Check the THINNEST station of the feature, not
-// its nominal size: a tapered finger is only as good as its tip.
+// Two lines is the floor; anything load-bearing wants three.  Check the
+// THINNEST station of the feature, not its nominal size: a tapered finger is
+// only as good as its tip.
+//
+// WHY single lines fail here is NOT established.  "Nothing to bond to sideways"
+// was the first explanation written down and it does not survive contact with
+// vase mode, which is single-width and bonds perfectly well.  Candidates that
+// remain open: cooling of a tiny island, seam start/stop behaviour, layer-to-
+// layer overlap collapsing as the path shifts, under-extrusion of an adaptive
+// thin path, or the nozzle knocking a weak tall feature.  Treat 2*nozzle as a
+// CALIBRATED THRESHOLD with a known-bad on one side of it and a known-good on
+// the other -- which is all a screening gate needs to be -- not as a mechanism.
+// The transition is not located: 0.50 mm failed and 0.90 mm worked, and nothing
+// was printed in between.  So the calibrated result is an INTERVAL, (0.50, 0.90],
+// and 2*nozzle = 0.80 is a heuristic chosen inside it.  A feature at 0.80-0.89
+// passes this gate on the heuristic alone, untested -- if you are sitting in
+// that band, print the coupon rather than trusting the constant.
 min_rib         = 2 * profile_nozzle;
+// The constructive twin of min_rib.  min_rib says never fewer than two lines;
+// this says LAND ON a whole number of them.  A wall sized to an exact multiple
+// of the line width is all perimeter -- no infill lane, no top/bottom skins,
+// no internal-bridge course -- so it is both lighter and stronger than a wall
+// 0.3 mm thicker.  Measured 2026-09-02: a lid skirt at 1.8 mm -- exactly 4 x 0.45
+// -- printed solid; the same skirt at 3.5 mm printed two walls with lattice
+// between them.
+//
+// Line width is NOT the nozzle diameter.  Read it from the sliced file, where
+// Orca states a resolved `; LINE_WIDTH:` before every feature; do NOT look in
+// the profile (auto widths store 0) and do NOT reconstruct it from extrusion
+// volume, which answers a different question -- an equivalent rectangle rather
+// than a rounded bead -- and returns 0.399 where the slicer says 0.45.
+//   wall = wall_lines(4);        // -> 4 * 0.45 = 1.80
+// Treat the result as a target to land NEAR, not a product to trust: Arachne
+// stretches perimeters to fill whatever you asked for, so nearby thicknesses
+// keep the same path count and merely cost weight -- but far enough away the
+// count, the gap fill and the stiffness all change together.
+function wall_lines(n, w = profile_wall_line_width) = n * w;
+// From the G-code body, not the nozzle diameter.  Re-read it if the profile,
+// nozzle or layer height changes.
+profile_wall_line_width = 0.45;
+// The mirror of min_rib: the narrowest GAP the slicer will leave OPEN.  Two
+// solids closer than about two line widths tend to fuse into one, and a split
+// snap pin whose slot fuses is a solid rod -- it looks right and cannot flex.
+// DECLARED, NOT MEASURED: no coupon has bracketed it on this machine, which is
+// why push_pin warns rather than asserts below it.  pins-test-snap3 sweeps
+// 0.6..1.0 mm to find it; write the answer here when it comes off the bed.
+min_gap         = 2 * profile_nozzle;
 min_floor       = 0.8;
 max_overhang    = 45;    // degrees from vertical, beyond which support is needed
 
