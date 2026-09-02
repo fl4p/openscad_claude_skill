@@ -229,10 +229,16 @@ module push_pin(j = pin_joint()) {
     shaft_d = hole_d - 0.2;
     y       = (barb_d - hole_d) / 2;          // deflection to pass the hole
     c       = seg_c_out(shaft_d, slot_w0);    // circular segment, NOT t/2
-    // Free length: root at the top of the head, where the slot starts, to the
-    // barb, where the load acts.  The barb's own height is NOT free length --
-    // counting it understates the strain.
-    L       = head_t + grip;
+    // Free length: root where the slot starts -- the TOP face of the head --
+    // to the barb, where the load acts.  Two ends, two traps, both hit here
+    // once already:
+    //   * the barb's own height is NOT free length.  Counting it understates
+    //     the strain.
+    //   * neither is the head.  Its 1.2 mm can only be added to L by running
+    //     the slot down through it, and a slot through the head severs the pin
+    //     into two loose halves -- it does not lengthen a cantilever, it
+    //     deletes the part.  Rendering one and counting bodies says 2.
+    L       = grip;
     // No taper credit: 0.86 is a width-tapered RECTANGLE and this is a segment
     // whose thickness and shape both change along the slot.
     eps_    = 3 * y * c / (L * L);
@@ -247,12 +253,11 @@ module push_pin(j = pin_joint()) {
             translate([0, 0, head_t + grip])
                 cylinder(h = barb_h, d1 = barb_d, d2 = shaft_d - 2*y);
         }
-        // The split runs from the top face of the HEAD, not from under it: the
-        // head is 1.2 mm of the free length and costs nothing to include, and
-        // L is squared.
+        // The split starts AT the top face of the head and no lower.  The head
+        // is what holds the two fingers together; cut it and there is no pin.
         hull() {
-            translate([-head_d, -slot_w0/2, -eps]) cube([2*head_d, slot_w0, eps]);
-            translate([-head_d, -slot_w1/2, L + barb_h]) cube([2*head_d, slot_w1, eps]);
+            translate([-head_d, -slot_w0/2, head_t]) cube([2*head_d, slot_w0, eps]);
+            translate([-head_d, -slot_w1/2, head_t + L + barb_h]) cube([2*head_d, slot_w1, eps]);
         }
     }
 }
