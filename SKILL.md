@@ -192,6 +192,7 @@ include <printable-lib.scad>          // brings in the printer profile's limits
 
 assert(wall  >= min_wall,  "wall below the printer's minimum");
 assert(floor_t >= min_floor, "floor below the printer's minimum");
+assert(rib_t >= min_rib,   "rib/finger under two extrusion widths");   // see below
 assert(outer_w < bed_size[0] && outer_h < bed_size[1], "part exceeds the bed");
 
 echo(str("Outer: ", outer_w, " x ", outer_h, " x ", total_h, " mm"));
@@ -229,6 +230,68 @@ tip to a second wall so it is a real bridge; reorient the part; split it. Only w
 space under the feature is *deliberate* — a board, a cavity, a wire run — is there no second
 anchor to reach, and then support is the answer. Say which rows you are choosing to support,
 and check that the support is removable from where it lands.
+
+### Manifold and overhang-clean is not the same as printable
+
+Every check above asks about **shape**. None of them asks whether the shape can be made
+out of 0.4 mm lines of plastic. That question has to be asked separately, and it is the
+one that produces parts that pass every gate and come off the bed as garbage.
+
+The failure, measured 2026-09-02. A split snap pin in a 3.2 mm hole: shaft 3.0 mm, a
+diametral slot tapering 1.6 → 2.0 mm. It was manifold. `connected bodies: 5`, one per
+pin. The overhang audit found nothing cantilevered. In the slicer's **Prepare** view it
+was a clean, solid pin. It printed as a **stack of loose unbonded rings** — a coil, not
+a beam.
+
+The arithmetic was on the page the whole time. A diametral slot leaves each finger a
+circular **segment**, whose thickness peaks on the centreline and falls to **zero** at
+both edges:
+
+```
+finger thickness = (shaft - slot) / 2  =  (3.0 - 2.0) / 2  =  0.50 mm  =  1.25 nozzles
+```
+
+One extrusion line per layer, with nothing to bond to sideways. The G-code says it
+outright — count extruding moves per layer:
+
+| revision | slot | thinnest finger | moves / pin / layer |
+|---|---|---|---|
+| tapered  | 1.6 → 2.0 | 0.50 mm = 1.25 lines | **4** |
+| parallel | 1.2 flat  | 0.90 mm = 2.25 lines | **24–29** |
+
+**Rules that fall out of it:**
+
+- **Check the thinnest station, not the nominal size.** A tapered slot, a draft angle, a
+  fillet running out — the tip decides. The nominal 0.7 mm above was never the number
+  that mattered.
+- **A taper is the textbook fix for bending stress and the wrong fix here.** It removes
+  material exactly where a segment is already thinnest. Prefer a parallel slot and buy
+  the stress margin from length instead.
+- **`min_wall` is not `min_rib`.** A wall is fought over its area; a rib or finger is
+  narrow in one direction and the slicer must fill it with whole lines. Two lines is the
+  floor — one line has no sideways neighbour to weld to. Three for anything load-bearing.
+- **Prepare shows a shape; Preview shows what will exist.** They disagree exactly when it
+  matters. If a feature is anywhere near the nozzle width, open the sliced preview and
+  look at that layer, or count the moves.
+
+**The gate, and it is cheap:**
+
+```sh
+# per-layer extruding moves; a feature that collapses to single lines shows up as
+# a layer count that does not scale with the number of parts on the plate
+grep -c 'G1.*E' plate.gcode        # crude but decisive when the number is 4
+```
+
+Better, put it in the model where it aborts the render — `printable-lib.scad` now gates
+`push_pin` on exactly this, and reports the failure in extrusion widths rather than mm,
+because "0.5 mm" reads as a dimension while "1.25 extrusion widths" reads as a verdict.
+
+**And know when the answer is "not at this size".** Thickening a snap finger to make it
+printable *raises* its strain, because `ε = 3yt/2L²` is linear in `t`. At a 3.2 mm hole
+with 5.6 mm of grip there is no slot width that is both ≥ 2 lines thick and under PLA's
+1.5 % design strain while still retaining. The only real lever is `L`, which enters
+squared. When two constraints have no overlap, say so and change the mechanism — a
+longer flexure, a two-piece drive rivet, or a screw — instead of tuning between them.
 
 **Then size it.** "That looks like a lot of support" is answerable with a number:
 

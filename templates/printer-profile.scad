@@ -65,7 +65,19 @@ xy_expansion = 0.00;
 
 // --- Print constraints ----------------------------------------------------
 // Used by the deterministic pre-flight gate before any render is looked at.
-min_wall        = 1.2;   // thinnest wall that survives FDM
+min_wall        = 1.2;   // thinnest WALL that survives FDM
+// The thinnest RIB, FINGER, or SPOKE -- a feature narrow in one direction that
+// the slicer must fill with whole extrusion lines.  It is a different number
+// from min_wall and it is the one that gets forgotten, because a model can be
+// manifold, overhang-clean, and correct in the Prepare view while slicing into
+// single unbonded lines.  Measured 2026-09-02: a snap finger 0.70 mm at its
+// thickest, tapering to zero at its edges, sliced to ONE extrusion per layer
+// and printed as a stack of loose rings -- a coil, not a beam.
+//
+// Two lines is the floor: one line has nothing to bond to sideways.  Anything
+// load-bearing wants three.  Check the THINNEST station of the feature, not
+// its nominal size: a tapered finger is only as good as its tip.
+min_rib         = 2 * profile_nozzle;
 min_floor       = 0.8;
 max_overhang    = 45;    // degrees from vertical, beyond which support is needed
 

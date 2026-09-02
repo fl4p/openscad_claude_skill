@@ -197,9 +197,14 @@ module snap_tab(width=8, free_length=12, thick=1.5, overhang=0.8, ramp=2, root_r
 //  3 bore_d    the frame's bore
 //  4 head_d    5 head_t   6 barb_d   7 barb_h   8 slot_w0   9 slot_w1
 // 10 relief_d  the frame is opened out to this below the retention face
+// slot_w0 == slot_w1 by default: the slot is PARALLEL, not tapered.  A taper
+// is the textbook way to even out bending stress, but it thins the finger
+// exactly where a circular segment is already thinnest, and the tip is the
+// station the printability gate judges.  A parallel 1.2 mm slot in a 3.0 mm
+// shaft leaves 0.90 mm of finger everywhere -- 2.25 extrusion widths.
 function pin_joint(grip = 5.6, board = 1.6, hole_d = 3.2, bore_d = 3.4,
                    head_d = 6, head_t = 1.2, barb_d = 4.0, barb_h = 0.8,
-                   slot_w0 = 1.6, slot_w1 = 2.0, relief_d = 5.0) =
+                   slot_w0 = 1.2, slot_w1 = 1.2, relief_d = 5.0) =
     assert(board > 0 && board < grip, "pin_joint: need 0 < board < grip")
     assert(hole_d < bore_d, "pin_joint: the frame bore must clear the board hole")
     assert(slot_w0 > 0 && slot_w0 <= slot_w1, "pin_joint: need 0 < slot_w0 <= slot_w1")
@@ -242,6 +247,25 @@ module push_pin(j = pin_joint()) {
     // No taper credit: 0.86 is a width-tapered RECTANGLE and this is a segment
     // whose thickness and shape both change along the slot.
     eps_    = 3 * y * c / (L * L);
+    // PRINTABILITY, checked at the THINNEST station.  A diametral slot leaves
+    // each finger a circular SEGMENT: its thickness peaks at the centreline and
+    // falls to zero at both edges, so the nominal figure flatters it badly.  If
+    // the slot is tapered, the tip is thinner still -- check there.
+    // This gate exists because the first printed pin passed manifoldness, passed
+    // the overhang audit, and looked solid in the slicer's Prepare view, then
+    // sliced to a single extrusion per layer and printed as a stack of loose
+    // rings.  Nothing in the geometry was wrong; it simply could not be made.
+    t_tip   = (shaft_d - max(slot_w0, slot_w1)) / 2;
+    assert(t_tip >= min_rib,
+           str("push pin finger is ", t_tip, " mm at its thinnest = ",
+               t_tip / profile_nozzle, " extrusion widths, under the ",
+               min_rib, " mm floor. It will slice to single unbonded lines. ",
+               "Narrow the slot (this RAISES strain -- check both gates), or ",
+               "lengthen the flexure, which lowers strain as 1/L^2."));
+    assert(max(slot_w0, slot_w1) >= 2 * y,
+           str("the slot is ", max(slot_w0, slot_w1), " mm but the two fingers ",
+               "must close by ", 2*y, " mm to enter the hole -- they collide ",
+               "before the barb passes."));
     assert(eps_ <= strain_limit(),
            str("push pin over the strain budget: ", eps_*100, " % > ",
                strain_limit()*100, " %. Run the slot further (L is squared), ",
