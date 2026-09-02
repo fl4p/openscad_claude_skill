@@ -97,63 +97,149 @@ module chamfer_edge(length=10, size=1) {
 }
 
 // --- Snap-fit strain ---
-// eps = 3*y*t / (2*L^2) for a straight cantilever, where y is the deflection the
-// hook has to make (its overhang), t the finger thickness in bending and L the
-// FREE length from the root to the hook.  A finger tapering to half thickness at
-// the tip carries ~1.16x the deflection for the same strain; pass taper=true.
+// eps = 3*y*t / (2*L^2) for a straight cantilever of RECTANGULAR section, where
+// y is the deflection the hook must make, t the finger thickness in bending and
+// L the FREE length -- root to hook, excluding anything embedded in the parent.
+// A rectangular finger tapering to half thickness at the tip carries ~1.16x the
+// deflection for the same strain; pass taper=true.  That 0.86 factor is for a
+// WIDTH-tapered rectangle and nothing else: do not claim it for a section whose
+// thickness or shape changes along the length.
 //
 // The trap this exists to close: L is squared, so a clip that is a little too
 // short is not a little too weak, it is broken.  The old default here --
 // length=6, thick=1.5, overhang=0.8 -- computes to 5 % strain and snaps off a
 // PLA part on first assembly.  L had to be 11 mm for those numbers to work.
-function snap_strain(y, t, L, taper = false) = (taper ? 0.86 : 1) * 3 * y * t / (2 * L * L);
+//
+// Domain-checked, because a negative y or t silently returns a negative strain
+// that passes every <= gate.
+function snap_strain(y, t, L, taper = false) =
+    assert(y > 0, "snap_strain: deflection y must be > 0")
+    assert(t > 0, "snap_strain: thickness t must be > 0")
+    assert(L > 0, "snap_strain: free length L must be > 0")
+    (taper ? 0.86 : 1) * 3 * y * t / (2 * L * L);
+
+// The strain limit is a MATERIAL number and the profile may not know the
+// material.  Bound it, and say so when it is a handbook default rather than a
+// measured one -- an unqualified 1.5 % is a starting point, not a guarantee.
+function strain_limit() =
+    assert(snap_strain_max > 0 && snap_strain_max <= 0.06,
+           str("snap_strain_max = ", snap_strain_max, " is outside 0..0.06. ",
+               "A bare '1' means 100 % strain, not 1 %."))
+    snap_strain_max;
+
+// --- Split-shaft finger section -------------------------------------------
+// A pin split by a slot does NOT have a rectangular section.  Each finger is a
+// circular segment, so its neutral axis sits toward the flat and the outer
+// fibre is FARTHER from it than t/2.  Using t/2 understates strain by ~17 % on
+// a 3 mm shaft, which is the difference between passing and failing a gate.
+// Returns the outer-fibre distance c to use in eps = 3*y*c/L^2.
+function seg_c_out(shaft_d, slot_w) =
+    assert(slot_w > 0 && slot_w < shaft_d, "seg_c_out: need 0 < slot_w < shaft_d")
+    let (R = shaft_d/2, a = slot_w/2,
+         th = acos(a/R),                       // degrees
+         A  = R*R * (th*PI/180 - sin(th)*cos(th)),
+         yc = (2/3) * R*R*R * pow(sin(th), 3) / A)
+    R - yc;
 
 // --- Snap-fit tab ---
-// Cantilever snap tab extending along Y with a hook at the end.  `length` is the
-// free length and it is the parameter that matters: see snap_strain above.
-module snap_tab(width=8, length=12, thick=1.5, overhang=0.8) {
-    assert(snap_strain(overhang, thick, length) <= snap_strain_max,
-           str("snap tab over the strain budget: ",
-               snap_strain(overhang, thick, length)*100, " % > ",
-               snap_strain_max*100, " %. Lengthen it (L is squared), ",
-               "thin it, or reduce the hook."));
+// Cantilever arm along +Y, bending in Z, with a barb standing proud in +Z at
+// the free end: a vertical retention face on the root side and a lead-in ramp
+// toward the tip.  The barb must protrude BEYOND the arm's own envelope or it
+// is not a barb -- an earlier version of this module put the "hook" inside the
+// arm's Z envelope, so `overhang` named a deflection the geometry never made.
+//
+// `free_length` is the root-to-barb length and it is what the strain gate uses.
+// The root fillet is drawn at NEGATIVE y, outside that length, so the caller
+// embeds everything at y <= 0 and the asserted length is the real one.
+module snap_tab(width=8, free_length=12, thick=1.5, overhang=0.8, ramp=2, root_r=1) {
+    assert(ramp > 0 && ramp < free_length, "snap_tab: need 0 < ramp < free_length");
+    assert(root_r >= 0, "snap_tab: root_r must be >= 0");
+    eps_ = snap_strain(overhang, thick, free_length);
+    assert(eps_ <= strain_limit(),
+           str("snap tab over the strain budget: ", eps_*100, " % > ",
+               strain_limit()*100, " %. Lengthen it (L is squared), thin it, ",
+               "or reduce the barb."));
     union() {
-        // Cantilever arm
-        cube([width, length, thick]);
-        // Hook at the end (rotated extrusion for clean manifold)
-        translate([0, length - eps, 0])
-            rotate([90, 0, 90])
-                linear_extrude(height=width)
-                    polygon([[0, 0], [thick + eps, 0], [thick/2, overhang]]);
+        cube([width, free_length, thick]);
+        // barb: flat catch face at free_length-ramp, ramping down to the tip
+        translate([0, 0, 0]) rotate([90, 0, 90])
+            linear_extrude(height = width)
+                polygon([[free_length - ramp, thick],
+                         [free_length - ramp, thick + overhang],
+                         [free_length,        thick]]);
+        // root fillet, at y < 0 so it is not counted as free length
+        if (root_r > 0)
+            translate([0, 0, 0]) rotate([90, 0, 90])
+                linear_extrude(height = width)
+                    difference() {
+                        translate([-root_r, 0]) square([root_r, root_r]);
+                        translate([-root_r, root_r]) circle(r = root_r, $fn = 32);
+                    }
     }
 }
 
-// --- Push-pin, and the bore that receives it ---
+// --- Push-pin, and the bore that receives it -------------------------------
 // A separate pin beats a snap post moulded into the frame whenever the mating
 // part cannot be lowered straight down -- anything that slides, hinges or drops
 // in at an offset.  A fixed post standing in a mounting hole can only be entered
 // from directly above; a pin dropped in AFTER the part is seated does not care
 // how the part got there.  It also keeps metal out of plated holes.
 //
-// `grip` is board thickness + the frame material under it, and it is the free
-// length of the fingers, so it is what buys the strain budget.  Relieve any
-// frame deeper than one chosen grip (pin_bore does it) and ONE pin serves every
-// hole in the assembly.
+// The pin and its bore are ONE joint and are described by ONE parameter set.
+// They used to be two independent signatures, and two independently valid
+// signatures can still describe a joint whose barb never leaves the narrow
+// bore.  Build the vector once, hand it to both.
 //
+//  0 grip      board thickness + frame kept under the seat; the fingers' free
+//              length is the SLOT length, which runs the whole pin (see below)
+//  1 board     the part being pinned
+//  2 hole_d    the board's hole
+//  3 bore_d    the frame's bore
+//  4 head_d    5 head_t   6 barb_d   7 barb_h   8 slot_w0   9 slot_w1
+// 10 relief_d  the frame is opened out to this below the retention face
+function pin_joint(grip = 5.6, board = 1.6, hole_d = 3.2, bore_d = 3.4,
+                   head_d = 6, head_t = 1.2, barb_d = 4.0, barb_h = 0.8,
+                   slot_w0 = 1.6, slot_w1 = 2.0, relief_d = 5.0) =
+    assert(board > 0 && board < grip, "pin_joint: need 0 < board < grip")
+    assert(hole_d < bore_d, "pin_joint: the frame bore must clear the board hole")
+    assert(slot_w0 > 0 && slot_w0 <= slot_w1, "pin_joint: need 0 < slot_w0 <= slot_w1")
+    assert(slot_w1 < hole_d - 0.2, "pin_joint: the slot is wider than the shaft")
+    assert((barb_d - bore_d)/2 >= 0.25,
+           str("pin_joint: retention ledge is only ", (barb_d - bore_d)/2,
+               " mm -- under 0.25 the barb rides back out of the bore"))
+    assert(relief_d >= barb_d + 0.5,
+           str("pin_joint: relief ", relief_d, " does not clear a ", barb_d,
+               " barb -- it cannot spring out"))
+    [grip, board, hole_d, bore_d, head_d, head_t, barb_d, barb_h,
+     slot_w0, slot_w1, relief_d];
+
 // Print head-down: the head gives a wide first layer instead of balancing on the
 // tip, and the only overhang is the barb's retention ledge.  Slice it WITHOUT
 // support -- support would pack the split, which is both unreachable and the
 // part that has to spring.
-module push_pin(grip = 5.6, hole_d = 3.2, bore_d = 3.4, head_d = 6, head_t = 1.2,
-                barb_d = 4.0, barb_h = 0.8, slot_w0 = 1.2, slot_w1 = 2.0) {
+//
+// NOTE ON THE LIMIT: printed head-down, this finger bends across its layer
+// interfaces.  snap_strain_max is a handbook design strain for MOULDED stock;
+// layer-normal loading is a different and weaker failure mode that it does not
+// cover.  Treat a passing number as necessary, not sufficient, until a coupon
+// in the same orientation has been cycled.
+module push_pin(j = pin_joint()) {
+    grip = j[0]; hole_d = j[2]; head_d = j[4]; head_t = j[5];
+    barb_d = j[6]; barb_h = j[7]; slot_w0 = j[8]; slot_w1 = j[9];
     shaft_d = hole_d - 0.2;
     y       = (barb_d - hole_d) / 2;          // deflection to pass the hole
-    t       = (shaft_d - slot_w0) / 2;        // finger thickness at the root
-    assert(snap_strain(y, t, grip, true) <= snap_strain_max,
-           str("push pin over the strain budget: ",
-               snap_strain(y, t, grip, true)*100, " %. Lengthen the grip, ",
-               "widen the slot, or shrink the barb."));
-    assert(barb_d > bore_d, "barb does not engage the bore -- no retention");
+    c       = seg_c_out(shaft_d, slot_w0);    // circular segment, NOT t/2
+    // Free length: root at the top of the head, where the slot starts, to the
+    // barb, where the load acts.  The barb's own height is NOT free length --
+    // counting it understates the strain.
+    L       = head_t + grip;
+    // No taper credit: 0.86 is a width-tapered RECTANGLE and this is a segment
+    // whose thickness and shape both change along the slot.
+    eps_    = 3 * y * c / (L * L);
+    assert(eps_ <= strain_limit(),
+           str("push pin over the strain budget: ", eps_*100, " % > ",
+               strain_limit()*100, " %. Run the slot further (L is squared), ",
+               "widen it, or shrink the barb."));
     difference() {
         union() {
             cylinder(h = head_t, d = head_d);
@@ -161,20 +247,25 @@ module push_pin(grip = 5.6, hole_d = 3.2, bore_d = 3.4, head_d = 6, head_t = 1.2
             translate([0, 0, head_t + grip])
                 cylinder(h = barb_h, d1 = barb_d, d2 = shaft_d - 2*y);
         }
-        translate([0, 0, head_t]) hull() {
-            translate([-head_d, -slot_w0/2, 0]) cube([2*head_d, slot_w0, eps]);
-            translate([-head_d, -slot_w1/2, grip + barb_h])
-                cube([2*head_d, slot_w1, eps]);
+        // The split runs from the top face of the HEAD, not from under it: the
+        // head is 1.2 mm of the free length and costs nothing to include, and
+        // L is squared.
+        hull() {
+            translate([-head_d, -slot_w0/2, -eps]) cube([2*head_d, slot_w0, eps]);
+            translate([-head_d, -slot_w1/2, L + barb_h]) cube([2*head_d, slot_w1, eps]);
         }
     }
 }
 
-// The receiving bore, as a cut.  `depth` is the frame under the seat; anything
-// past `grip - board` is relieved so the barb can spring out and the retention
-// face lands at a fixed depth whatever the boss height.
-module pin_bore(depth, board = 1.6, grip = 5.6, bore_d = 3.4, relief_d = 5.0) {
+// The receiving bore, as a cut, from the SAME joint vector as the pin.  `depth`
+// is the frame under the seat; anything past grip - board is relieved so the
+// barb can spring out and the retention face lands at a fixed depth whatever
+// the boss height.
+module pin_bore(depth, j = pin_joint()) {
+    grip = j[0]; board = j[1]; bore_d = j[3]; relief_d = j[10];
     keep = grip - board;
-    assert(depth >= keep, "not enough frame under the seat for the pin to grip");
+    assert(depth >= keep,
+           str("not enough frame under the seat: ", depth, " < ", keep));
     translate([0, 0, -depth - eps]) cylinder(h = depth + 2*eps, d = bore_d);
     if (depth > keep)
         translate([0, 0, -depth - eps]) cylinder(h = depth - keep + eps, d = relief_d);

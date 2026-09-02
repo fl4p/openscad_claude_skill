@@ -235,7 +235,9 @@ countersink_hole(d=3, cs_d=6, cs_h=2, h=10);
 heatset_boss(insert_d=4.6, insert_h=5, wall=2, h=8);
 screw_post(outer_d=7, inner_d=3, h=10);
 rib(len=20, height=12, thick=2);
-snap_tab(width=8, length=6, thick=1.5, overhang=0.8);
+snap_tab(width=8, free_length=12, thick=1.5, overhang=0.8);
+// length=6 with these numbers is 5 % strain -- the assert rejects it.
+// L is squared: the fix is a longer arm, not a smaller barb.
 text_label("Hello", size=8, depth=1);
 
 fit_clearance("press");   // 0.15mm

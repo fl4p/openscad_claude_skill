@@ -74,7 +74,14 @@ max_overhang    = 45;    // degrees from vertical, beyond which support is neede
 // snaps off -- so it is here rather than buried in the module that uses it.
 // PLA is brittle: 1.5 % for a fastener meant to be assembled more than once,
 // 2 % for a one-time snap.  PETG ~2.5 %, ABS/ASA ~3 %, nylon ~5 %.
-// Layer lines run across a printed finger, so these are already conservative
-// against the datasheet's injection-moulded figures -- do not raise them.
+//
+// PROVENANCE: these are handbook design strains for MOULDED stock.  They are
+// not measured here, and profile_filament above is empty -- so a gate built on
+// this number knows neither the material nor the print orientation it is
+// judging.  A printed finger loaded ACROSS its layer interfaces fails by
+// delamination, which this figure does not describe at all; calling it
+// "conservative" for that case would be an assumption, not a derate.  Treat a
+// pass as necessary and not sufficient until a coupon in the same orientation
+// has been cycled, and set profile_filament before relying on it.
 snap_strain_max = 0.015;
 bed_size        = [256, 256, 256];   // Bambu Lab P1P build volume
