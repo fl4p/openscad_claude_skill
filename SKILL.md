@@ -210,8 +210,11 @@ anything is under it. Read it as **evidence, not a verdict**:
 
 | row | what it means |
 |---|---|
-| **NOTHING under part of it** | there is no second anchor to bridge to. Support, or redesign. |
-| material N mm below | *undecided.* It may be a pocket roof that bridges — or a one-sided shelf floating above an unrelated floor. The tool does not compute anchor topology. Look at the sliced preview. |
+| **no upward surface below part of it** | nothing is *directly under* it. That is a cantilever needing support **or** a roof spanning two walls, which bridges fine — the tool sees only downward, so both land here. Decide from the model. |
+| material N mm below | *undecided.* It may be a pocket roof that bridges — or a one-sided shelf floating above an unrelated floor. Look at the sliced preview. |
+
+Neither row is a verdict: the tool computes no anchor topology in **either** direction. It
+finds the faces worth thinking about and refuses to think for you.
 
 The audit runs on the mesh in **model coordinates** and knows nothing about placement, cooling,
 speed or support settings. A slicer rotation about X or Y invalidates every row. It never says
@@ -234,29 +237,43 @@ scripts/openscad-gcode-feature-volume.py plate.gcode
 ```
 
 It splits the sliced extrusion by feature type, so a support setting's cost is visible before
-the print. Measured on a 127 × 92 × 28 mm frame with seven unanchored ceilings:
+the print. Retraction is netted off — an unretraction is not new material, and support travels
+far more than perimeters do, so counting it inflates the one number you are measuring.
+
+What follows is **one part's numbers, not a policy.** It is a single 127 × 92 × 28 mm frame
+with seven unanchored ceilings, OrcaSlicer 2.x / P1P / PLA / 0.20 mm. Treat each line as a
+hypothesis to A/B on your own geometry, and re-measure rather than inheriting the ranking:
 
 | `support_style` | support | share of the print | time |
 |---|---|---|---|
-| `grid` (default) | 15.07 cm³ | 23.8 % | 2 h 14 m |
-| `snug` | 8.37 cm³ | 14.8 % | 2 h 01 m |
-| `tree(auto)` | 14.69 cm³ | 23.3 % | 2 h 14 m |
+| `grid` | 11.67 cm³ | 24.4 % | 2 h 18 m |
+| `snug` | 4.73 cm³ | 11.5 % | 2 h 04 m |
+| `organic` (tree) | 7.97 cm³ | 18.0 % | 2 h 52 m |
 
-`snug` follows each overhang's own footprint instead of dropping a prism from it, and on a part
-whose overhangs are small and scattered that halved it for nothing — same coverage, 13 minutes
-saved. `support_base_pattern_spacing` and `support_threshold_angle` moved it by under 1 cm³ by
-comparison: once the body is snug, what is left is mostly interface and support walls, so widen
-the spacing for a little more and stop there. Tree helps organic shapes, not flat ledges.
+**Verify the setting was applied, in the sliced output, before you believe a row.**
+OrcaSlicer does not reject an unknown `support_style`: it writes `support_style = default`
+into the G-code and slices anyway. An earlier version of this table carried a `tree` row that
+was byte-identical to `grid`, because `tree` is not a value — `organic` is, and it also needs
+`support_type = tree(auto)`. A silently ignored setting does not fail; it returns a plausible
+number for the wrong slice. `grep` the resolved key out of the G-code every time.
 
-Two settings matter more than the density:
+`snug` follows each overhang's own footprint instead of dropping a prism from it, which is why
+it won *here*, where the overhangs are small and scattered — on a part with one large ceiling
+there is no prism to save. On this part `support_base_pattern_spacing` and
+`support_threshold_angle` each moved it by under 1 cm³, and tree did not help; that is a
+result about flat scattered ledges, not a ranking of the settings in general. The volume
+numbers say nothing about surface quality, removability, or strength, none of which were
+measured. Keep the sliced file or its per-feature summary if you intend to cite them.
+
+Two settings tend to matter more than density — verify both on your own slice:
 
 - **`bridge_no_support = 1`.** Otherwise the slicer packs support into every blind nut trap and
   downward-opening pocket, where it cannot be dug out and no nut will seat. Anything anchored on
   two sides and under `max_bridge_length` then bridges instead. Check the resolved
   `max_bridge_length` in the sliced 3mf rather than trusting a profile's documented default —
   the inheritance chain does not always give you what the vendor page says.
-- **`support_top_z_distance`** at one layer height. Less and it welds on; more and the first
-  layer over it droops anyway.
+- **`support_top_z_distance`** at one layer height was right on this part: less welded it on,
+  more let the first layer over it droop. It is a starting point to test, not a constant.
 
 **Reviewing a slice: open the `.gcode`, not the `.gcode.3mf`.** A `.gcode.3mf` opens as a
 *project*, so touching the printer or filament preset in the GUI swaps the process preset for a
