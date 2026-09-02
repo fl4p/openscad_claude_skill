@@ -68,4 +68,13 @@ xy_expansion = 0.00;
 min_wall        = 1.2;   // thinnest wall that survives FDM
 min_floor       = 0.8;
 max_overhang    = 45;    // degrees from vertical, beyond which support is needed
+
+// Design strain for a snap-fit finger.  This is a MATERIAL property, not a
+// printer one, and it is the number that decides whether a clip assembles or
+// snaps off -- so it is here rather than buried in the module that uses it.
+// PLA is brittle: 1.5 % for a fastener meant to be assembled more than once,
+// 2 % for a one-time snap.  PETG ~2.5 %, ABS/ASA ~3 %, nylon ~5 %.
+// Layer lines run across a printed finger, so these are already conservative
+// against the datasheet's injection-moulded figures -- do not raise them.
+snap_strain_max = 0.015;
 bed_size        = [256, 256, 256];   // Bambu Lab P1P build volume

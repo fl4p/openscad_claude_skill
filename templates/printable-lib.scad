@@ -96,9 +96,27 @@ module chamfer_edge(length=10, size=1) {
             polygon([[0, 0], [size, 0], [0, size]]);
 }
 
+// --- Snap-fit strain ---
+// eps = 3*y*t / (2*L^2) for a straight cantilever, where y is the deflection the
+// hook has to make (its overhang), t the finger thickness in bending and L the
+// FREE length from the root to the hook.  A finger tapering to half thickness at
+// the tip carries ~1.16x the deflection for the same strain; pass taper=true.
+//
+// The trap this exists to close: L is squared, so a clip that is a little too
+// short is not a little too weak, it is broken.  The old default here --
+// length=6, thick=1.5, overhang=0.8 -- computes to 5 % strain and snaps off a
+// PLA part on first assembly.  L had to be 11 mm for those numbers to work.
+function snap_strain(y, t, L, taper = false) = (taper ? 0.86 : 1) * 3 * y * t / (2 * L * L);
+
 // --- Snap-fit tab ---
-// Creates a cantilever snap tab extending along Y with a hook at the end
-module snap_tab(width=8, length=6, thick=1.5, overhang=0.8) {
+// Cantilever snap tab extending along Y with a hook at the end.  `length` is the
+// free length and it is the parameter that matters: see snap_strain above.
+module snap_tab(width=8, length=12, thick=1.5, overhang=0.8) {
+    assert(snap_strain(overhang, thick, length) <= snap_strain_max,
+           str("snap tab over the strain budget: ",
+               snap_strain(overhang, thick, length)*100, " % > ",
+               snap_strain_max*100, " %. Lengthen it (L is squared), ",
+               "thin it, or reduce the hook."));
     union() {
         // Cantilever arm
         cube([width, length, thick]);
@@ -108,6 +126,58 @@ module snap_tab(width=8, length=6, thick=1.5, overhang=0.8) {
                 linear_extrude(height=width)
                     polygon([[0, 0], [thick + eps, 0], [thick/2, overhang]]);
     }
+}
+
+// --- Push-pin, and the bore that receives it ---
+// A separate pin beats a snap post moulded into the frame whenever the mating
+// part cannot be lowered straight down -- anything that slides, hinges or drops
+// in at an offset.  A fixed post standing in a mounting hole can only be entered
+// from directly above; a pin dropped in AFTER the part is seated does not care
+// how the part got there.  It also keeps metal out of plated holes.
+//
+// `grip` is board thickness + the frame material under it, and it is the free
+// length of the fingers, so it is what buys the strain budget.  Relieve any
+// frame deeper than one chosen grip (pin_bore does it) and ONE pin serves every
+// hole in the assembly.
+//
+// Print head-down: the head gives a wide first layer instead of balancing on the
+// tip, and the only overhang is the barb's retention ledge.  Slice it WITHOUT
+// support -- support would pack the split, which is both unreachable and the
+// part that has to spring.
+module push_pin(grip = 5.6, hole_d = 3.2, bore_d = 3.4, head_d = 6, head_t = 1.2,
+                barb_d = 4.0, barb_h = 0.8, slot_w0 = 1.2, slot_w1 = 2.0) {
+    shaft_d = hole_d - 0.2;
+    y       = (barb_d - hole_d) / 2;          // deflection to pass the hole
+    t       = (shaft_d - slot_w0) / 2;        // finger thickness at the root
+    assert(snap_strain(y, t, grip, true) <= snap_strain_max,
+           str("push pin over the strain budget: ",
+               snap_strain(y, t, grip, true)*100, " %. Lengthen the grip, ",
+               "widen the slot, or shrink the barb."));
+    assert(barb_d > bore_d, "barb does not engage the bore -- no retention");
+    difference() {
+        union() {
+            cylinder(h = head_t, d = head_d);
+            translate([0, 0, head_t - eps]) cylinder(h = grip + eps, d = shaft_d);
+            translate([0, 0, head_t + grip])
+                cylinder(h = barb_h, d1 = barb_d, d2 = shaft_d - 2*y);
+        }
+        translate([0, 0, head_t]) hull() {
+            translate([-head_d, -slot_w0/2, 0]) cube([2*head_d, slot_w0, eps]);
+            translate([-head_d, -slot_w1/2, grip + barb_h])
+                cube([2*head_d, slot_w1, eps]);
+        }
+    }
+}
+
+// The receiving bore, as a cut.  `depth` is the frame under the seat; anything
+// past `grip - board` is relieved so the barb can spring out and the retention
+// face lands at a fixed depth whatever the boss height.
+module pin_bore(depth, board = 1.6, grip = 5.6, bore_d = 3.4, relief_d = 5.0) {
+    keep = grip - board;
+    assert(depth >= keep, "not enough frame under the seat for the pin to grip");
+    translate([0, 0, -depth - eps]) cylinder(h = depth + 2*eps, d = bore_d);
+    if (depth > keep)
+        translate([0, 0, -depth - eps]) cylinder(h = depth - keep + eps, d = relief_d);
 }
 
 // --- Text emboss/deboss helper ---

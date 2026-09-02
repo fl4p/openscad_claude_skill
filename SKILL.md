@@ -152,6 +152,22 @@ from any directory. If you invoke `openscad` by hand outside those scripts, expo
 export OPENSCADPATH=~/.claude/skills/openscad/templates
 ```
 
+**Snap fits and press-in fasteners.** `snap_strain(y, t, L)` = `3yt/(2L²)`, checked against
+`snap_strain_max` in the printer profile (PLA 1.5 %). `snap_tab` and `push_pin` assert on it,
+because **L is squared**: a clip a little too short is not a little weak, it is broken. The
+library's own former default — `length=6, thick=1.5, overhang=0.8` — computed to 5 % and would
+snap off a PLA part on first assembly; it needed L = 11 mm. Do not eyeball this, and do not
+hand-compute the finger thickness either: for a split cylinder it is `(shaft − slot)/2`, and a
+hand-written estimate of that quietly cost 0.17 percentage points on a real part until the
+assert caught it.
+
+**A moulded snap post can only be entered from directly above.** If the mating part slides,
+hinges, or drops in at an offset, a post standing in its mounting hole is impossible no matter
+how good the clip is — check the assembly *route* before designing the fastener. A separate
+`push_pin`, dropped in after the part is seated, decouples the fastener from the route entirely,
+and lets one pin serve every hole in the assembly if you relieve each bore to a common grip.
+It also keeps metal out of plated holes.
+
 The library already carries counterbores, heat-set bosses, screw posts, ribs, snap tabs,
 rounded boxes, shells, vents and lid lips, and those modules already read the printer profile.
 Keep the Feature Tree structure from Design mode (parameters, derived, profile, body, add, cut,
@@ -241,6 +257,12 @@ Two settings matter more than the density:
   the inheritance chain does not always give you what the vendor page says.
 - **`support_top_z_distance`** at one layer height. Less and it welds on; more and the first
   layer over it droops anyway.
+
+**Reviewing a slice: open the `.gcode`, not the `.gcode.3mf`.** A `.gcode.3mf` opens as a
+*project*, so touching the printer or filament preset in the GUI swaps the process preset for a
+stock one and silently re-slices — with support off, whatever the file said. The raw `.gcode`
+opens in viewer mode, where there is nothing left to re-slice and no preset can override what
+you are looking at.
 
 After trimming, **re-verify coverage** — a lighter setting can quietly stop reaching a feature.
 Parse the sliced G-code for `Support` extrusions in the layers just below each ceiling you care
