@@ -519,27 +519,38 @@ you are looking at.
 
 Two failures that cost a print each, both of them upstream of the model.
 
-**A copy of a vendor preset loads as an empty preset, and the slice fails silently.** Vendor
-profiles are an inheritance chain — `Generic ASA` → `Generic ASA @base` → `fdm_filament_asa` →
-`fdm_filament_common` — and `inherits` is resolved *by name against the vendor tree*. Copy the
-top file somewhere else and there is nothing to resolve, so it loads empty and slices to
-nothing. OrcaSlicer says nothing about it because its stdout is discarded; you get no plate and
-no error. This bit twice, once on a machine json and once on a filament json.
+**A vendor preset's `inherits` chain is not resolved by the CLI, and the result is a
+plausible plate of the wrong material.** Vendor profiles are an inheritance chain —
+`Generic ASA @BBL P1P` → `Generic ASA @base` → `fdm_filament_asa` →
+`fdm_filament_common` — and passing the top file to the slicer CLI loads *only that
+file's own keys*. Everything it inherited falls back to the common defaults. Measured,
+slicing with Bambu's own stock P1P ASA preset:
 
-Resolve the chain yourself and emit **one flat preset with no `inherits` left in it**. Orca then
-rejects a preset with no origin, so supply `from: "User"` and `instantiation: "true"` — that
-rejection *is* reported, unlike the silent one. Commit the flattening script, not just its
-output, because the chain moves when the slicer updates.
+```
+slice-check OK: plate='Textured PEI Plate' bed=45C filament=PLA
+```
 
-**`compatible_printers` is a policy statement, not a capability check.** Plain ASA listed only
-enclosed machines; the open-frame one was excluded on purpose. That list is overridable, and
-sometimes should be — but read what the exclusion is telling you before you override it. Here
-the material vendor's own page asked for a 45–60 °C chamber that the machine does not have, so
-the preset was right and the override is a knowingly-degraded print, not a fix.
+An ASA preset produced a **PLA plate at a 45 °C bed**, with no warning of any kind. This
+is worse than an empty preset that fails loudly: it succeeds, the file looks right, and
+the material is wrong. Copying the preset elsewhere does not cause this and does not
+avoid it — the file's location is irrelevant, the CLI simply does not walk `inherits`.
 
-And do not reach for whichever variant *is* listed. The only presets offered for that machine
-were a foaming grade and a carbon-filled one — and CF stiffens precisely the flexure a snap fit
-needs to bend. **A material name shared with your requirement is not the material.**
+The fix is to **resolve the chain yourself, parent-first, and emit one flat preset with
+no `inherits` left in it**. Commit the flattening script, because the chain moves when
+the slicer updates. And keep a guard that reads the **resolved** values back out of the
+sliced G-code — `filament_type`, the plate temperature for the plate actually fitted —
+because that guard is the only thing between you and a silently wrong plate.
+
+**Corollary worth generalising: a preset system that composes by inheritance has a
+failure mode that a flat one does not — partial resolution that still validates.** Any
+value you rely on from a layered config should be read back from the artefact that was
+actually produced, not from the file you passed in.
+
+**And check the per-printer subdirectories before concluding a preset does not exist.**
+`filament/` holds vendor and printer subdirectories (`filament/P1P/…`), so a top-level
+listing will miss exactly the machine-specific preset you are looking for. I concluded
+Bambu shipped no P1P ASA profile, wrote that into two files, and was wrong — it was one
+directory down.
 
 **The printer's declared filament is not a reading.** With no AMS and no RFID on the spool,
 nothing on the machine ever looks at the filament: the reported type is whatever was last
