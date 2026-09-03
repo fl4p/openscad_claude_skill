@@ -466,6 +466,49 @@ What it costs is scalloping between the interface lines on the supported face. W
 faces are functional — here the boards bolt to them — that sets a ceiling: 0.7 was as far as
 this part went without a test coupon, and the seats still get dressed flat before assembly.
 
+### When the probe is the tool, tool cleanliness is a measurement precondition
+
+Five consecutive plates aborted at layer 0 on a bed-levelling force-sensor fault whose
+text pointed squarely at hardware — *"the signal of heatbed force sensor 3 is too weak,
+the electronic connection to the sensor may be broken."* Nothing was broken. There was
+**filament residue on the nozzle tip**, and on a machine that levels by pressing the
+nozzle into the bed, the tip is the probe. A blob on it is a measurement error, and it
+is reported as a sensor fault.
+
+**Read the machine start G-code before diagnosing anything that fails before layer 1.**
+The resolved values sit in the sliced file, and on this printer they say:
+
+```
+M109 S250   ; purge / "common flush temp"
+M109 S240   ; wipe nozzle   (= nozzle_temperature_initial_layer - 20)
+M104 S140   ; "set temp down to heatbed acceptable"
+G29         ; levelling probes HERE, nozzle at 140 C
+```
+
+That sequence is benign for the material the profile was tuned around and hostile to a
+hotter one. At a 260 °C initial layer the wipe runs at **240 — the very bottom of ASA's
+240–280 range**, too viscous to wipe clean; the probe then happens at a hard-coded
+140 °C, *below that material's glass transition*, so whatever survived the wipe arrives
+at the bed as a hard lump. PLA never trips it: it wipes at ~200 where it is genuinely
+fluid, and at 140 any residue still squashes. **Raising the initial-layer temperature
+raises the wipe with it** — the cheap lever, and in-range. Do not raise the probe
+temperature; that number is protecting the build plate.
+
+**The diagnostic move that found it generalises past printers: compare what ran BEFORE
+the passing and failing operations, not just the operations.** One levelling had
+succeeded, at a lower bed temperature, and that near-coincidence bought two wrong
+theories — a thermal-expansion mechanism, then a degrading connector. Both died when a
+plate at the *low* temperature failed identically. The real difference was never
+temperature: the one clean run was a raw levelling command sent by hand, **with no purge
+or wipe before it**, so there was no fresh residue. Every failure ran the full purge
+first. A control that differs in its preamble is not a control.
+
+Two habits fall out. **Prefer the explanation that needs no coincidence** — "a connector
+degraded on the same day the material changed" needs one; "the new material wipes badly"
+does not. And when a fault's own text names a component, treat that as the machine's
+*hypothesis*, not its measurement: it is reporting what its sensor saw, and every
+upstream reason the sensor might see that is still open.
+
 **Reviewing a slice: open the `.gcode`, not the `.gcode.3mf`.** A `.gcode.3mf` opens as a
 *project*, so touching the printer or filament preset in the GUI swaps the process preset for a
 stock one and silently re-slices — with support off, whatever the file said. The raw `.gcode`
