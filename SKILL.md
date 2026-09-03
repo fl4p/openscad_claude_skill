@@ -494,6 +494,28 @@ fluid, and at 140 any residue still squashes. **Raising the initial-layer temper
 raises the wipe with it** — the cheap lever, and in-range. Do not raise the probe
 temperature; that number is protecting the build plate.
 
+**Clean the nozzle tip by hand after any material swap. This is a required step, not a
+tidy-up.** A hotter wipe is not sufficient on its own: a second machine hit the identical
+fault while already slicing at a 270 °C initial layer (so wiping at 250), because an
+incomplete swap had left a PLA stub in a cold hot end. Residue is the mechanism, and PLA
+residue hardens at the 140 °C probe whether the wipe ran at 240 or 250. The wipe
+temperature reduces how much residue is produced; it does not remove what is already
+there.
+
+**And check whether the stock preset already had the right number, by parsing the field
+rather than the filename.** The 260 °C that caused this was a hand-built substitute,
+adopted after a survey concluded no stock preset existed for the machine. It did exist —
+`Bambu ASA @BBL X1C 0.4 nozzle`, whose `compatible_printers` lists P1P 0.4 and 0.8, and
+which resolves to **nozzle 270, bed 100, `filament_type: ASA`**. Eleven ASA presets
+declared that printer; the survey missed every one because it matched **filenames**
+(`*ASA*P1P*`) against a vendor tree whose plain-ASA files are named for a different
+model. *A filename is a label someone chose; compatibility is a field.* Parse the field
+across every candidate file. Five failed plates were the cost of not reading it.
+
+(The flattening those presets were replacing is still required for CLI slicing — see the
+`inherits` trap below — but it should have been flattening **Bambu's** values, not
+substituting invented ones.)
+
 **The diagnostic move that found it generalises past printers: compare what ran BEFORE
 the passing and failing operations, not just the operations.** One levelling had
 succeeded, at a lower bed temperature, and that near-coincidence bought two wrong
@@ -532,8 +554,19 @@ slice-check OK: plate='Textured PEI Plate' bed=45C filament=PLA
 
 An ASA preset produced a **PLA plate at a 45 °C bed**, with no warning of any kind. This
 is worse than an empty preset that fails loudly: it succeeds, the file looks right, and
-the material is wrong. Copying the preset elsewhere does not cause this and does not
-avoid it — the file's location is irrelevant, the CLI simply does not walk `inherits`.
+the material is wrong.
+
+**The root cause is location-independent — the CLI never walks `inherits` — but the
+symptom is not, which is why this is easy to misdiagnose:**
+
+| Where the file sits | What loads | How it fails |
+|---|---|---|
+| **Copied out** of the vendor tree | nothing — `inherits` names a parent that cannot be found | loudly: empty preset, no plate, and the CLI's own stdout is discarded so you may see no message at all |
+| **Passed in place** from the vendor tree | the leaf's own keys only; everything inherited silently defaults | quietly: a plate that slices fine and exists in no profile — e.g. nozzle 270 from the ASA leaf over a defaulted 45 °C bed and `filament_type: PLA` |
+
+The second is the dangerous one, and it defeats the obvious check: the G-code header's
+`filament_settings_id` still names the ASA preset you asked for. **Verify the resolved
+values, never the profile name.**
 
 The fix is to **resolve the chain yourself, parent-first, and emit one flat preset with
 no `inherits` left in it**. Commit the flattening script, because the chain moves when
