@@ -466,144 +466,6 @@ What it costs is scalloping between the interface lines on the supported face. W
 faces are functional — here the boards bolt to them — that sets a ceiling: 0.7 was as far as
 this part went without a test coupon, and the seats still get dressed flat before assembly.
 
-### When the probe is the tool, tool cleanliness is a measurement precondition
-
-Five consecutive plates aborted at layer 0 on a bed-levelling force-sensor fault whose
-text pointed squarely at hardware — *"the signal of heatbed force sensor 3 is too weak,
-the electronic connection to the sensor may be broken."* Nothing was broken. There was
-**filament residue on the nozzle tip**, and on a machine that levels by pressing the
-nozzle into the bed, the tip is the probe. A blob on it is a measurement error, and it
-is reported as a sensor fault.
-
-**Read the machine start G-code before diagnosing anything that fails before layer 1.**
-The resolved values sit in the sliced file, and on this printer they say:
-
-```
-M109 S250   ; purge / "common flush temp"
-M109 S240   ; wipe nozzle   (= nozzle_temperature_initial_layer - 20)
-M104 S140   ; "set temp down to heatbed acceptable"
-G29         ; levelling probes HERE, nozzle at 140 C
-```
-
-That sequence is benign for the material the profile was tuned around and hostile to a
-hotter one. At a 260 °C initial layer the wipe runs at **240 — the very bottom of ASA's
-240–280 range**, too viscous to wipe clean; the probe then happens at a hard-coded
-140 °C, *below that material's glass transition*, so whatever survived the wipe arrives
-at the bed as a hard lump. PLA never trips it: it wipes at ~200 where it is genuinely
-fluid, and at 140 any residue still squashes. **Raising the initial-layer temperature
-raises the wipe with it** — the cheap lever, and in-range. Do not raise the probe
-temperature; that number is protecting the build plate.
-
-**Clean the nozzle tip by hand after any material swap. This is a required step, not a
-tidy-up.** A hotter wipe is not sufficient on its own: a second machine hit the identical
-fault while already slicing at a 270 °C initial layer (so wiping at 250), because an
-incomplete swap had left a PLA stub in a cold hot end. Residue is the mechanism, and PLA
-residue hardens at the 140 °C probe whether the wipe ran at 240 or 250. The wipe
-temperature reduces how much residue is produced; it does not remove what is already
-there.
-
-**And check whether the stock preset already had the right number, by parsing the field
-rather than the filename.** The 260 °C that caused this was a hand-built substitute,
-adopted after a survey concluded no stock preset existed for the machine. It did exist —
-`Bambu ASA @BBL X1C 0.4 nozzle`, whose `compatible_printers` lists P1P 0.4 and 0.8, and
-which resolves to **nozzle 270, bed 100, `filament_type: ASA`**. Eleven ASA presets
-declared that printer; the survey missed every one because it matched **filenames**
-(`*ASA*P1P*`) against a vendor tree whose plain-ASA files are named for a different
-model. *A filename is a label someone chose; compatibility is a field.* Parse the field
-across every candidate file. Five failed plates were the cost of not reading it.
-
-(The flattening those presets were replacing is still required for CLI slicing — see the
-`inherits` trap below — but it should have been flattening **Bambu's** values, not
-substituting invented ones.)
-
-**The diagnostic move that found it generalises past printers: compare what ran BEFORE
-the passing and failing operations, not just the operations.** One levelling had
-succeeded, at a lower bed temperature, and that near-coincidence bought two wrong
-theories — a thermal-expansion mechanism, then a degrading connector. Both died when a
-plate at the *low* temperature failed identically. The real difference was never
-temperature: the one clean run was a raw levelling command sent by hand, **with no purge
-or wipe before it**, so there was no fresh residue. Every failure ran the full purge
-first. A control that differs in its preamble is not a control.
-
-Two habits fall out. **Prefer the explanation that needs no coincidence** — "a connector
-degraded on the same day the material changed" needs one; "the new material wipes badly"
-does not. And when a fault's own text names a component, treat that as the machine's
-*hypothesis*, not its measurement: it is reporting what its sensor saw, and every
-upstream reason the sensor might see that is still open.
-
-**Reviewing a slice: open the `.gcode`, not the `.gcode.3mf`.** A `.gcode.3mf` opens as a
-*project*, so touching the printer or filament preset in the GUI swaps the process preset for a
-stock one and silently re-slices — with support off, whatever the file said. The raw `.gcode`
-opens in viewer mode, where there is nothing left to re-slice and no preset can override what
-you are looking at.
-
-### A preset the vendor excluded, and the machine state no one measured
-
-Two failures that cost a print each, both of them upstream of the model.
-
-**A vendor preset's `inherits` chain is not resolved by the CLI, and the result is a
-plausible plate of the wrong material.** Vendor profiles are an inheritance chain —
-`Generic ASA @BBL P1P` → `Generic ASA @base` → `fdm_filament_asa` →
-`fdm_filament_common` — and passing the top file to the slicer CLI loads *only that
-file's own keys*. Everything it inherited falls back to the common defaults. Measured,
-slicing with Bambu's own stock P1P ASA preset:
-
-```
-slice-check OK: plate='Textured PEI Plate' bed=45C filament=PLA
-```
-
-An ASA preset produced a **PLA plate at a 45 °C bed**, with no warning of any kind. This
-is worse than an empty preset that fails loudly: it succeeds, the file looks right, and
-the material is wrong.
-
-**The root cause is location-independent — the CLI never walks `inherits` — but the
-symptom is not, which is why this is easy to misdiagnose:**
-
-| Where the file sits | What loads | How it fails |
-|---|---|---|
-| **Copied out** of the vendor tree | nothing — `inherits` names a parent that cannot be found | loudly: empty preset, no plate, and the CLI's own stdout is discarded so you may see no message at all |
-| **Passed in place** from the vendor tree | the leaf's own keys only; everything inherited silently defaults | quietly: a plate that slices fine and exists in no profile — e.g. nozzle 270 from the ASA leaf over a defaulted 45 °C bed and `filament_type: PLA` |
-
-The second is the dangerous one, and it defeats the obvious check: the G-code header's
-`filament_settings_id` still names the ASA preset you asked for. **Verify the resolved
-values, never the profile name.**
-
-The fix is to **resolve the chain yourself, parent-first, and emit one flat preset with
-no `inherits` left in it**. Commit the flattening script, because the chain moves when
-the slicer updates. And keep a guard that reads the **resolved** values back out of the
-sliced G-code — `filament_type`, the plate temperature for the plate actually fitted —
-because that guard is the only thing between you and a silently wrong plate.
-
-**Corollary worth generalising: a preset system that composes by inheritance has a
-failure mode that a flat one does not — partial resolution that still validates.** Any
-value you rely on from a layered config should be read back from the artefact that was
-actually produced, not from the file you passed in.
-
-**And check the per-printer subdirectories before concluding a preset does not exist.**
-`filament/` holds vendor and printer subdirectories (`filament/P1P/…`), so a top-level
-listing will miss exactly the machine-specific preset you are looking for. I concluded
-Bambu shipped no P1P ASA profile, wrote that into two files, and was wrong — it was one
-directory down.
-
-**The printer's declared filament is not a reading.** With no AMS and no RFID on the spool,
-nothing on the machine ever looks at the filament: the reported type is whatever was last
-picked in a menu. Change the spool without changing the menu and every consumer of that field is
-stale — including your own pre-flight guard, which will then announce a *settings* mismatch in
-the language of a measurement ("the printer reports PLA loaded"). Those need opposite actions —
-swap the spool, or fix a menu entry — so make the guard say which one it found and where it read
-it.
-
-The reason this matters more than tidy wording: **the declaration carries limits that act.**
-Left on generic PLA it also carried a 190–240 °C nozzle envelope, against a plate asking for
-260. So the obvious workaround — a flag to skip the material check — is exactly the move that
-sends 260 °C to a machine that believes it is holding PLA. The field was settable over the
-printer's own API, which is the actual repair.
-
-Generalise it: **before overriding a guard, find out what else consumes the value it is
-reading.** A guard is usually the cheapest consumer of that value and rarely the only one, so
-"the check is in my way" and "the check is wrong" are different findings and only one of them
-licenses a flag.
-
 After trimming, **re-verify coverage** — a lighter setting can quietly stop reaching a feature.
 Parse the sliced G-code for `Support` extrusions in the layers just below each ceiling you care
 about, in that ceiling's own footprint. Trimming support by 45 % is only good news if every row
@@ -628,6 +490,32 @@ an unrecognised state land on `OK`.
 
 A part that fails here never reaches the render. The eye is for shape; these are arithmetic,
 and arithmetic should not cost a vision call.
+
+### Two failures that live upstream of the model
+
+Both cost prints, neither is geometry, and the full write-ups moved to the `p1p` skill
+(`~/dev/ee/p1p/doc/`) when this skill stopped being their right home. The rules that survive
+the move, because they are not printer-specific:
+
+- **Verify resolved values, never a preset name.** A slicer CLI that composes presets by
+  `inherits` does not necessarily walk the chain: a vendor ASA preset produced a PLA plate at a
+  45 °C bed, with the G-code header still naming the ASA preset. Any value you rely on from a
+  layered config must be read back out of the artefact that was actually produced. Partial
+  resolution that still validates is a failure mode a flat config does not have.
+- **Parse the field, not the filename.** A survey matching `*ASA*P1P*` concluded no stock preset
+  existed; eleven declared that printer in `compatible_printers`. A filename is a label someone
+  chose; compatibility is a field.
+- **A fault's text is the machine's hypothesis, not its measurement.** When a fault names a
+  component, every upstream reason its sensor might see that is still open — a levelling
+  force-sensor error was residue on the nozzle tip, which on a machine that levels by touch *is*
+  the probe.
+- **A control that differs in its preamble is not a control.** The one passing run differed from
+  the failures not in the variable under test but in what ran before it. Compare what preceded
+  the passing and failing operations, not just the operations.
+- **Before overriding a guard, find out what else consumes the value it reads.** "The check is in
+  my way" and "the check is wrong" are different findings; only one licenses a flag.
+- **Reviewing a slice: open the `.gcode`, not the `.gcode.3mf`.** The `.3mf` opens as a project,
+  so touching a preset in the GUI silently re-slices — with support off, whatever the file said.
 
 ### The orientation you model in is not the orientation it prints in
 
