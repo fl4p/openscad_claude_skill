@@ -472,6 +472,51 @@ stock one and silently re-slices — with support off, whatever the file said. T
 opens in viewer mode, where there is nothing left to re-slice and no preset can override what
 you are looking at.
 
+### A preset the vendor excluded, and the machine state no one measured
+
+Two failures that cost a print each, both of them upstream of the model.
+
+**A copy of a vendor preset loads as an empty preset, and the slice fails silently.** Vendor
+profiles are an inheritance chain — `Generic ASA` → `Generic ASA @base` → `fdm_filament_asa` →
+`fdm_filament_common` — and `inherits` is resolved *by name against the vendor tree*. Copy the
+top file somewhere else and there is nothing to resolve, so it loads empty and slices to
+nothing. OrcaSlicer says nothing about it because its stdout is discarded; you get no plate and
+no error. This bit twice, once on a machine json and once on a filament json.
+
+Resolve the chain yourself and emit **one flat preset with no `inherits` left in it**. Orca then
+rejects a preset with no origin, so supply `from: "User"` and `instantiation: "true"` — that
+rejection *is* reported, unlike the silent one. Commit the flattening script, not just its
+output, because the chain moves when the slicer updates.
+
+**`compatible_printers` is a policy statement, not a capability check.** Plain ASA listed only
+enclosed machines; the open-frame one was excluded on purpose. That list is overridable, and
+sometimes should be — but read what the exclusion is telling you before you override it. Here
+the material vendor's own page asked for a 45–60 °C chamber that the machine does not have, so
+the preset was right and the override is a knowingly-degraded print, not a fix.
+
+And do not reach for whichever variant *is* listed. The only presets offered for that machine
+were a foaming grade and a carbon-filled one — and CF stiffens precisely the flexure a snap fit
+needs to bend. **A material name shared with your requirement is not the material.**
+
+**The printer's declared filament is not a reading.** With no AMS and no RFID on the spool,
+nothing on the machine ever looks at the filament: the reported type is whatever was last
+picked in a menu. Change the spool without changing the menu and every consumer of that field is
+stale — including your own pre-flight guard, which will then announce a *settings* mismatch in
+the language of a measurement ("the printer reports PLA loaded"). Those need opposite actions —
+swap the spool, or fix a menu entry — so make the guard say which one it found and where it read
+it.
+
+The reason this matters more than tidy wording: **the declaration carries limits that act.**
+Left on generic PLA it also carried a 190–240 °C nozzle envelope, against a plate asking for
+260. So the obvious workaround — a flag to skip the material check — is exactly the move that
+sends 260 °C to a machine that believes it is holding PLA. The field was settable over the
+printer's own API, which is the actual repair.
+
+Generalise it: **before overriding a guard, find out what else consumes the value it is
+reading.** A guard is usually the cheapest consumer of that value and rarely the only one, so
+"the check is in my way" and "the check is wrong" are different findings and only one of them
+licenses a flag.
+
 After trimming, **re-verify coverage** — a lighter setting can quietly stop reaching a feature.
 Parse the sliced G-code for `Support` extrusions in the layers just below each ceiling you care
 about, in that ceiling's own footprint. Trimming support by 45 % is only good news if every row
