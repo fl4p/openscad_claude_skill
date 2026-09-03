@@ -418,8 +418,9 @@ it won *here*, where the overhangs are small and scattered — on a part with on
 there is no prism to save. On this part `support_base_pattern_spacing` and
 `support_threshold_angle` each moved it by under 1 cm³, and tree did not help; that is a
 result about flat scattered ledges, not a ranking of the settings in general. The volume
-numbers say nothing about surface quality, removability, or strength, none of which were
-measured. Keep the sliced file or its per-feature summary if you intend to cite them.
+numbers say nothing about surface quality or strength, neither of which was measured — and on
+removability they are actively misleading, which is the next section. Keep the sliced file or
+its per-feature summary if you intend to cite them.
 
 Two settings tend to matter more than density — verify both on your own slice:
 
@@ -429,7 +430,41 @@ Two settings tend to matter more than density — verify both on your own slice:
   `max_bridge_length` in the sliced 3mf rather than trusting a profile's documented default —
   the inheritance chain does not always give you what the vendor page says.
 - **`support_top_z_distance`** at one layer height was right on this part: less welded it on,
-  more let the first layer over it droop. It is a starting point to test, not a constant.
+  more let the first layer over it droop. It is a starting point to test, not a constant. It is
+  *not* the removal knob, and reaching for it first is the mistake below.
+
+**Tune support for removal, and it is not the knob you reach for first.** The frame above came
+off the bed with its support welded to the boss faces and was a fight to clean up — after the
+volume table had already been measured, published, and believed. Volume was the wrong quantity.
+
+The weld is in **`support_interface_spacing`**, and the trap is that it is a *line pitch*
+measured against a line **width** that the profile never states. Measure the width out of the
+sliced G-code — on this part the interface line was 0.350 mm across 1871 moves with no spread —
+because until the pitch passes that number it opens **no gap at all**. At the profile's 0.2 the
+lines overlapped by 0.15 mm: not an interface, a solid sheet fused to the part. And no
+`support_top_z_distance` rescues it, because the weld lives in the interface's own extrusion,
+not in the air gap above it.
+
+Now look at what the sliced numbers do as that pitch opens (organic, same part):
+
+| `support_interface_spacing` | interface coverage | support total |
+|---|---|---|
+| 0.2 | 100 % | 7.97 cm³ |
+| 0.5 | 70 % | 7.68 |
+| 0.7 | 50 % | 7.40 |
+| 0.9 | 39 % | 7.67 |
+| 1.2 | 29 % | 7.50 |
+
+**Volume is nearly flat and non-monotonic** — organic re-routes its branches every slice, worth
+about 0.3 cm³ of run-to-run noise, which is most of the spread in that column. A filament-led
+search over this knob finds ~7 % and calls it a wash. The column that matters is coverage:
+100 % → 50 % is the difference between chiselling and lifting. So do not confirm a support
+setting on the quantity your script happens to print; name the quantity you are actually buying
+first, and check the cheap one is not standing in for it.
+
+What it costs is scalloping between the interface lines on the supported face. Where those
+faces are functional — here the boards bolt to them — that sets a ceiling: 0.7 was as far as
+this part went without a test coupon, and the seats still get dressed flat before assembly.
 
 **Reviewing a slice: open the `.gcode`, not the `.gcode.3mf`.** A `.gcode.3mf` opens as a
 *project*, so touching the printer or filament preset in the GUI swaps the process preset for a
