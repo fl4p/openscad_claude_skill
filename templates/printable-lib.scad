@@ -206,6 +206,51 @@ module snap_tab(width=8, free_length=12, thick=1.5, overhang=0.8, ramp=2, root_r
 // 12 tight_ok  deliberately allow slot < 2*y; see the gate in push_pin
 // 13 web_t     thickness of the spring web tying the fingers under the barb;
 //              0 = none.  See pin_spring_web for why it is a diagonal.
+// 14 shaft_d   the shank OD through the board.  Used to be hard-wired to
+//              hole_d - 0.2, which is 0.2 mm of DIAMETRAL slop in the board
+//              hole -- 0.1 mm of rattle in any direction, and the bench duly
+//              reported the seated pin as "kind of loose".  It is a fit, so it
+//              belongs in the profile-derived layer with the other fits, not in
+//              a magic constant inside the module.  It is also NOT free to
+//              raise: the shank is what the two fingers are cut out of, so a
+//              bigger OD makes each finger thicker and stiffer (as t^3 through
+//              I, though strain rises only linearly in c) and therefore raises
+//              insertion force.  Sweep it; do not assume it.
+// 15 barb_style "lobe" (masked to what the hole can pass) or "ring" (full
+//              collar -- kept only to reproduce the pins that could not be
+//              assembled; see barb_mask).
+// 16 nose_h    ogive above the barb; 0 = flat tip.
+// 17 brace_n   sacrificial ties across the slot, print aid only.
+// 18 brace_u   where they go, as a fraction of the free length up from the
+//              root: a scalar, a list of brace_n of them, or undef for even
+//              spacing at i/(brace_n+1).
+// 19 taper_d   DIAMETRAL widening of the shank at the head end, tapering back
+//              to shaft_d over taper_h.  Deliberately takes the shank OVER
+//              hole_d: it is an interference fit that tightens as the head
+//              seats, and it is the only thing on this pin that removes RADIAL
+//              play.  The barb cannot -- it is a ledge under a bore, so it sets
+//              axial retention and says nothing about rattle.  A wedge is
+//              self-limiting, so the failure mode is a pin that stops HIGH with
+//              its barb unengaged.  Keep it small and sweep it.
+// 21 taper_ok  allow the taper to exceed hole_d -- an interference fit.  Off
+//              by default because on a split shank it is paid for in barb
+//              engagement; push_pin quantifies the bill when it is on.
+// 20 taper_h   how deep the taper runs, default = board.  Confining it to the
+//              board puts the interference against the board hole (hole_d) and
+//              not the frame bore (bore_d), which is wider and would need far
+//              more material to reach.
+//
+// A NOTE ON barb_h, because it is the one dimension a printed frame can veto.
+// The lead-in cone runs barb_d -> shaft_d over barb_h, so the half-angle from
+// the axis is atan((barb_d - shaft_d)/2 / barb_h).  Insertion force scales with
+// tan of that angle, so a TALLER cone is the cheap way to make a given barb go
+// in: 4.7 into a 3.1 shank is 45 deg at barb_h 0.8 and 38.7 deg at 1.0, about
+// 30 % less wedging for nothing but length.  What it costs is length BELOW the
+// seat -- the pin protrudes keep + barb_h under every boss -- and that length
+// is spent against whatever the frame hangs the barb over.  Check it before
+// raising it: on stack-frame the L1 barb hangs in free air above the mux and
+// its tip sits 0.2 mm clear of the 2 mm SMD keep-out at barb_h 0.8, so 1.0 is
+// the ceiling and 1.2 is a collision with an already-printed part.
 // slot_w0 == slot_w1 by default: the slot is PARALLEL, not tapered.  A taper is
 // the textbook way to even out bending stress and it remains a legitimate
 // technique -- what it cannot do is run the finger under the print floor.  The
@@ -221,11 +266,37 @@ module snap_tab(width=8, free_length=12, thick=1.5, overhang=0.8, ramp=2, root_r
 function pin_joint(grip = 5.6, board = 1.6, hole_d = 3.2, bore_d = 3.4,
                    head_d = 6, head_t = 1.2, barb_d = 4.0, barb_h = 0.8,
                    slot_w0 = 1.2, slot_w1 = 1.2, relief_d = 5.0,
-                   root_fill = 0, tight_ok = false, web_t = 0) =
+                   root_fill = 0, tight_ok = false, web_t = 0,
+                   shaft_d = undef, barb_style = "lobe", nose_h = 0,
+                   brace_n = 0, brace_u = undef,
+                   taper_d = 0, taper_h = undef, taper_ok = false) =
+    let (shaft = is_undef(shaft_d) ? hole_d - 0.2 : shaft_d)
     assert(board > 0 && board < grip, "pin_joint: need 0 < board < grip")
+    assert(shaft < hole_d,
+           str("pin_joint: shaft ", shaft, " does not clear the board hole ",
+               hole_d, ". At equality it is a press fit, not a push pin, and ",
+               "the fingers would be pre-loaded closed before the barb ever ",
+               "reaches the bore."))
+    assert(taper_d >= 0, "pin_joint: taper_d must be >= 0")
+    assert(is_undef(taper_h) || (taper_h > 0 && taper_h <= grip),
+           "pin_joint: taper_h must be > 0 and no deeper than the grip")
+    // The head end may REACH the hole but must not exceed it.  A split shank is
+    // compliant, so an oversize taper does not simply scrape -- it squeezes the
+    // fingers together at the root, and closing them at the root rotates the
+    // whole finger inward and RETRACTS THE BARB.  An interference fit here buys
+    // friction by spending engagement, which is the wrong trade on a 0.2 mm
+    // ledge.  Zero clearance at the head is the whole available budget.
+    assert(taper_ok || shaft + taper_d <= hole_d,
+           str("pin_joint: the taper takes the head end to ", shaft + taper_d,
+               ", over the ", hole_d, " board hole. On a split shank that does ",
+               "not merely scrape -- it closes the fingers at the root, and a ",
+               "finger pushed in near its root carries the whole of the rest of ",
+               "itself inward. Pass taper_ok = true to do it deliberately, and ",
+               "read the barb-retraction warning it prints."))
+    assert(shaft > slot_w1,
+           str("pin_joint: slot ", slot_w1, " is wider than the shaft ", shaft))
     assert(hole_d < bore_d, "pin_joint: the frame bore must clear the board hole")
     assert(slot_w0 > 0 && slot_w0 <= slot_w1, "pin_joint: need 0 < slot_w0 <= slot_w1")
-    assert(slot_w1 < hole_d - 0.2, "pin_joint: the slot is wider than the shaft")
     // POLICY, not geometry.  Radial ledge alone does not decide pull-out --
     // barb face angle, bore edge condition, friction, creep and layer
     // orientation all enter, and none of them are modelled here.  0.25 is a
@@ -251,11 +322,17 @@ function pin_joint(grip = 5.6, board = 1.6, hole_d = 3.2, bore_d = 3.4,
                (barb_d - relief_d)/2, " mm of permanent deflection, which PLA ",
                "creeps out of. Effective ledge is capped at ",
                (relief_d - bore_d)/2, " mm either way."))
+    assert(barb_style == "lobe" || barb_style == "ring",
+           str("pin_joint: barb_style ", barb_style, " must be \"lobe\" or ",
+               "\"ring\". \"ring\" is the legacy full collar and it does not fit ",
+               "through the hole -- see barb_mask()."))
     assert(root_fill >= 0 && root_fill < grip - board,
            str("pin_joint: root_fill ", root_fill, " must leave flexure above ",
                "the board face -- keep it under grip - board = ", grip - board))
     [grip, board, hole_d, bore_d, head_d, head_t, barb_d, barb_h,
-     slot_w0, slot_w1, relief_d, root_fill, tight_ok, web_t];
+     slot_w0, slot_w1, relief_d, root_fill, tight_ok, web_t, shaft, barb_style,
+     nose_h, brace_n, brace_u, taper_d,
+     is_undef(taper_h) ? board : taper_h, taper_ok];
 
 // Print head-down: the head gives a wide first layer instead of balancing on the
 // tip, and the only overhang is the barb's retention ledge.  Slice it WITHOUT
@@ -291,13 +368,133 @@ module pin_spring_web(slot_w, span_x, z_lo, thick = 0.8, bite = 0.25) {
     }
 }
 
+// --- The only barb material that can ever pass the hole ---------------------
+// THE ERROR THIS EXISTS TO STOP, because it survived six revisions and three
+// printed plates:
+//
+// A split pin's fingers deflect ACROSS the slot -- call that Y.  A barb point at
+// (x, y) therefore moves to (x, y -/+ d).  Its X coordinate never changes.  On a
+// 4.7 mm ring barb the chord edges sit at |x| up to 2.30, and a 3.2 mm hole is
+// 1.60 mm half-width, so those edges CANNOT be retracted by any amount of finger
+// deflection, ever.  They do not snap through the hole; they are ploughed
+// through it.  That is why the measured limit sat near 1.5 mm of closure however
+// the slot, the root fill, the nose angle or the strain budget were moved -- all
+// that was ever being measured was how much interference PLA would scrape past.
+// It is also why a FATTER shank made insertion worse rather than better: it took
+// away the ovalisation clearance that was the only thing getting the ring
+// through.  Confirmed 2026-09-02 when the bench cut the collars off with a knife
+// and the pins started working.
+//
+// The passing condition is per-point, not per-diameter.  Deflected by d, a barb
+// point must land inside the hole:
+//
+//      x^2 + (y - d)^2 <= (hole_d/2)^2
+//
+// which is just a hole-sized cylinder shifted by d toward the finger.  Keep the
+// barb material that satisfies it and discard the rest, and what is left is a
+// lens on each finger -- the shape a commercial nylon push rivet has, arrived at
+// the same way.
+//
+// d IS NOT (barb_d - hole_d)/2.  That is the deflection the barb ASKS for; what
+// it can HAVE is set by the slot, because the two fingers meet when they have
+// closed by slot_w between them.  Using the nominal figure here would rebuild
+// the same unpassable collar in a prettier shape.  So d = slot_w/2, with no
+// credit for ovalisation -- ovalisation is real (~0.5 mm, measured) but it is
+// the thing that was being spent on scraping, and the point of this is to stop
+// spending it.  The consequence is that barb_d stops being the retention number:
+// the mask clips the barb at hole_d/2 + slot_w/2 whatever barb_d says, so the
+// EFFECTIVE ledge is (hole_d + slot_w - bore_d)/2 and the slot -- not the barb
+// -- is now the knob that sets retention.
+module barb_mask(hole_d, slot_w, h) {
+    d = slot_w / 2;
+    for (s = [-1, 1])
+        translate([0, s * d, -eps]) cylinder(h = h + 2*eps, d = hole_d);
+}
+
+// Effective barb after the mask, and the ledge it leaves on the bore shoulder.
+function lobe_reach(hole_d, slot_w) = hole_d + slot_w;          // as a diameter
+function lobe_ledge(hole_d, slot_w, bore_d) =
+    (min(lobe_reach(hole_d, slot_w), 1e9) - bore_d) / 2;
+
+
+// --- Ogive nose for a split pin ---------------------------------------------
+// A pilot that finds the hole before the barb has to do anything, and the only
+// part of a push pin that is purely cosmetic-adjacent: it carries no load, so
+// it is not bound by the strain budget.  It IS bound by min_rib, and that is
+// the thing that stops it being pointed.
+//
+// The slot runs through the nose -- it must, or the two fingers are tied
+// together at the tip and cannot close at all, which is the stiffest possible
+// place to join them.  So every station of the nose is split into two blades of
+// (d(z) - slot_w)/2, and the nose may only neck until those blades hit min_rib:
+//
+//      crown_d = slot_w1 + 2*min_rib
+//
+// That is why a split pin cannot have a sharp rocket point.  The tip is the
+// widest-gap, thinnest-material place on the whole part; necking it is exactly
+// the move that printed a stack of loose rings the first time.  What it CAN
+// have is length and curvature, which is most of the look anyway.
+//
+// The flank is a truncated ellipsoid: r(z) = (shaft_d/2)*sqrt(1 - (z/H)^2),
+// with H solved so the profile arrives at crown_d after exactly h.  Tangent
+// vertical where it leaves the shaft, so there is no crease at the joint, and
+// progressively steeper toward the crown -- an ogive, not a cone.
+module pin_nose(shaft_d, crown_d, h, n = 24) {
+    assert(crown_d < shaft_d, "pin_nose: crown must be under the shaft");
+    H = h / sqrt(1 - pow(crown_d/shaft_d, 2));
+    rotate_extrude()
+        polygon(concat([[0, 0]],
+                       [for (i = [0 : n])
+                            let (z = h * i / n)
+                            [(shaft_d/2) * sqrt(1 - pow(z/H, 2)), z]],
+                       [[0, h]]));
+}
+
+
+// --- Sacrificial print brace across the slot --------------------------------
+// A single extrusion line bridging the slot, there for the PRINTER and not for
+// the joint.  Printed head-down, the two fingers are tall thin towers with
+// nothing between them, and they lean toward each other as they go up -- the
+// nozzle drags them, the layers do not land where the model says, and the pair
+// arrives fused, bowed, or with the slot closed at the top.
+//
+// This is NOT pin_spring_web.  That was a structural tie meant to survive
+// assembly, and the arithmetic killed it: near the barb a compliant tie sees
+// the fingers' full relative closure and is unsurvivable at any printable
+// thickness.  A brace is the opposite -- it is MEANT to fail, and the design
+// target is that it fails easily and predictably:
+//
+//   one line wide (the slicer cannot make it thinner) x 2 layers tall
+//   = 0.45 x 0.40 = 0.18 mm^2, so roughly 9 N to part it in PLA
+//
+// which a fingernail or the first insertion will do. That is why it is exempt
+// from the strain gate: gating a fuse on whether it survives is a category
+// error. Break them off before assembly if you want a clean click; leaving them
+// on costs a one-off ~9 N on top of the insertion force.
+module pin_brace(slot_w, z, w = profile_wall_line_width, t = 0.4, bite = 0.3) {
+    translate([0, 0, z + t/2])
+        cube([w, slot_w + 2*bite, t], center = true);
+}
+
 module push_pin(j = pin_joint()) {
     grip = j[0]; hole_d = j[2]; head_d = j[4]; head_t = j[5];
     barb_d = j[6]; barb_h = j[7]; slot_w0 = j[8]; slot_w1 = j[9];
-    root_fill = j[11]; tight_ok = j[12]; web_t = j[13];
-    shaft_d = hole_d - 0.2;
-    y       = (barb_d - hole_d) / 2;          // deflection to pass the hole
-    c       = seg_c_out(shaft_d, slot_w0);    // circular segment, NOT t/2
+    root_fill = j[11]; tight_ok = j[12]; web_t = j[13]; shaft_d = j[14];
+    barb_style = j[15]; nose_h = j[16]; brace_n = j[17]; brace_u = j[18];
+    taper_d = j[19]; taper_h = j[20]; taper_ok = j[21];
+    crown_d = slot_w1 + 2 * min_rib;
+    // The deflection the finger actually makes. For a lobed barb the mask
+    // has already clipped everything the finger cannot reach, so the travel
+    // is exactly what the slot allows and no more; for a legacy ring it is
+    // whatever the barb demands, which is the number that never fitted.
+    y_eff = (barb_style == "lobe") ? slot_w1/2 : (barb_d - hole_d)/2;
+    y       = y_eff;                          // deflection to pass the hole
+    // The taper thickens the finger exactly where it bends, so the strain must
+    // be taken at the ROOT diameter, not at shaft_d.  Reading the nominal shank
+    // here would let the gate pass a pin whose real root is fatter than the one
+    // that was checked.
+    root_d  = shaft_d + taper_d;
+    c       = seg_c_out(root_d, slot_w0);     // circular segment, NOT t/2
     // Free length: root where the slot starts -- the TOP face of the head --
     // to the barb, where the load acts.  Two ends, two traps, both hit here
     // once already:
@@ -351,22 +548,49 @@ module push_pin(j = pin_joint()) {
     // whether two fingers translating straight at each other would touch before
     // the barb cleared the hole.  Real segments do not only translate -- the
     // shaft ovalises and the barb's chord edges are thin and compliant -- so the
-    // model is conservative, and measurably so: a pin at slot 1.3 / barb 4.5
-    // (2*y = 1.3, exactly the boundary) entered a real 3.2 mm board hole by hand
-    // on 2026-09-02, and rev-2 pins below the boundary entered easily.
+    // model is conservative, and it is now CALIBRATED rather than merely
+    // suspected.  On 2026-09-02 a plate swept the barb at a fixed 1.0 mm slot
+    // against the real frame:
+    //      barb 4.6, close 1.40 mm through 1.0   -> in
+    //      barb 4.7, close 1.50 mm through 1.0   -> in
+    //      barb 4.8, close 1.60 mm through 1.0   -> would NOT enter
+    // So ovalisation buys about 0.5 mm on a 3 mm shank -- a factor of ~1.5 on
+    // the allowed closure, not the 2.8 an earlier coupon was designed against.
+    // Treat 1.5 * slot as the real bound and the assert as the safe one.
     //
     // It is kept as an assert rather than softened to a warning because going
     // under it raises insertion force by an unmodelled amount, and that is worth
     // stating out loud. Pass tight_ok = true to declare the violation deliberate.
     // Minimum GAP, warned not asserted: min_gap is declared, never measured, so
     // a hard gate here would block the very coupon that would calibrate it.
+    // An interference taper is bought from the barb, and the size of the bill
+    // is worth printing rather than leaving to the assembler to discover.  A
+    // finger pushed inward by delta over the first `a` mm of its length leaves
+    // the load point at a slope of about 3*delta/(2a) and then runs STRAIGHT,
+    // so the barb, (L - a) further on, comes in by roughly delta + that slope
+    // times the remaining length.  That is an upper bound and a loose one: the
+    // shank is inside the frame bore, which stops the finger long before the
+    // free-beam figure -- but the bound is the honest number to quote, because
+    // the bore clearance that saves it is also play nobody measured.
+    if (taper_d > 0 && shaft_d + taper_d > hole_d) {
+        d_int = (shaft_d + taper_d - hole_d) / 2;
+        a     = taper_h;
+        theta = 3 * d_int / (2 * a);
+        pull  = d_int + theta * (grip + barb_h - a);
+        echo(str("WARNING: the taper interferes by ", d_int*1000, " um/side in ",
+                 "the ", hole_d, " hole. Free-beam bound on barb retraction: ",
+                 pull, " mm against a ", lobe_ledge(hole_d, slot_w1, j[3]),
+                 " mm ledge. The frame bore limits it to at most ",
+                 (j[3] - shaft_d)/2, " mm, which is the number that actually ",
+                 "applies -- but it is unmeasured clearance, not a design margin."));
+    }
     if (min(slot_w0, slot_w1) < min_gap)
         echo(str("WARNING: slot is ", min(slot_w0, slot_w1), " mm = ",
                  min(slot_w0, slot_w1)/profile_nozzle, " nozzle widths, under the ",
                  min_gap, " mm declared minimum gap. The slicer may fuse it, and a ",
                  "fused slot is a solid pin that cannot flex. Check the sliced ",
                  "preview at a mid-shaft layer before printing."));
-    assert(tight_ok || max(slot_w0, slot_w1) >= 2 * y,
+    assert(barb_style == "lobe" || tight_ok || max(slot_w0, slot_w1) >= 2 * y,
            str("the slot is ", max(slot_w0, slot_w1), " mm but the two fingers ",
                "must close by ", 2*y, " mm to enter the hole -- by a rigid-body ",
                "model they collide before the barb passes. That model is known ",
@@ -381,13 +605,35 @@ module push_pin(j = pin_joint()) {
         union() {
             cylinder(h = head_t, d = head_d);
             translate([0, 0, head_t - eps]) cylinder(h = grip + eps, d = shaft_d);
+            // Friction taper at the head end.  Printed head-down, every layer
+            // is smaller than the one below it, so it is overhang-free.
+            if (taper_d > 0)
+                translate([0, 0, head_t - eps])
+                    cylinder(h = taper_h + eps, d1 = root_d, d2 = shaft_d);
             // Lead-in cone.  d2 is shaft_d and NOT shaft_d - 2*y: the tip only
             // has to start under hole_d to find the hole, and shaft_d already
             // does (3.0 into 3.2).  Necking it to 2.2 bought nothing and put
             // the part's thinnest, most-stressed section at its free end --
             // 0.50 mm, the same figure that printed as loose rings.
+            //
+            // ...and a full RING of it does not fit through the hole at all.
+            // See barb_mask() below: a ring barb is clipped to two lobes, which
+            // is the only part of it that was ever going to retract.
             translate([0, 0, head_t + grip])
-                cylinder(h = barb_h, d1 = barb_d, d2 = shaft_d);
+                intersection() {
+                    cylinder(h = barb_h, d1 = barb_d, d2 = shaft_d);
+                    if (barb_style == "lobe") barb_mask(hole_d, slot_w1, barb_h);
+                    else cylinder(h = barb_h, d = barb_d + 1);   // legacy ring
+                }
+            // The shaft continues full width through the barb band, so clipping
+            // the barb never thins the finger -- it only removes the collar that
+            // stood proud of the shaft where nothing could move it.
+            if (barb_style == "lobe")
+                translate([0, 0, head_t + grip])
+                    cylinder(h = barb_h, d = shaft_d);
+            if (nose_h > 0)
+                translate([0, 0, head_t + grip + barb_h])
+                    pin_nose(shaft_d, crown_d, nose_h);
         }
         // The split starts at the top face of the head PLUS root_fill, and no
         // lower.  The head is what holds the two fingers together; cut into it
@@ -396,8 +642,29 @@ module push_pin(j = pin_joint()) {
         hull() {
             translate([-head_d, -slot_w0/2, head_t + root_fill])
                 cube([2*head_d, slot_w0, eps]);
-            translate([-head_d, -slot_w1/2, head_t + grip + barb_h])
+            translate([-head_d, -slot_w1/2, head_t + grip + barb_h + nose_h])
                 cube([2*head_d, slot_w1, eps]);
+        }
+    }
+    // Braces are added AFTER the slot is cut, for the same reason the web is:
+    // put them inside the difference and the slot deletes them.  Spaced over the
+    // free length, the topmost one just under the barb where the lean is worst.
+    // brace_u overrides that spacing: a fraction, or a list of them, of the
+    // free length measured UP from the root.  Low is not obviously worse -- the
+    // fingers lean about their root, so the gap they close is largest at the
+    // tip, but a low brace is short-moment and parts more cleanly, and it does
+    // not sit in the barb's way on the first insertion.
+    if (brace_n > 0) {
+        us = is_undef(brace_u) ? [for (i = [1 : brace_n]) i / (brace_n + 1)]
+           : is_list(brace_u)  ? brace_u
+           :                     [brace_u];
+        assert(len(us) == brace_n,
+               str("push_pin: brace_u gives ", len(us), " position(s) but ",
+                   "brace_n is ", brace_n));
+        for (u = us) {
+            assert(u > 0 && u < 1, "push_pin: brace_u must be in (0, 1)");
+            pin_brace(max(slot_w0, slot_w1),
+                      head_t + root_fill + u * (grip + barb_h - root_fill));
         }
     }
     // The web is added AFTER the slot is cut -- put it inside the difference and
@@ -458,8 +725,7 @@ module push_pin(j = pin_joint()) {
 // read the answer off the real frame.
 module press_pin(j = pin_joint(), press_d = 3.5, lead = 0.5) {
     grip = j[0]; board = j[1]; hole_d = j[2]; bore_d = j[3];
-    head_d = j[4]; head_t = j[5];
-    shaft_d = hole_d - 0.2;
+    head_d = j[4]; head_t = j[5]; shaft_d = j[14];
     keep    = grip - board;            // length inside the frame bore
     assert(press_d > shaft_d,
            str("press_pin: press section ", press_d, " must exceed the ",

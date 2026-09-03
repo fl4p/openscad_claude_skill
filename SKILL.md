@@ -335,6 +335,10 @@ shape, the number of fingers, the print orientation and the material are all liv
 cheapest lever of all is often **deleting the flexure**: a press fit has no finger and
 therefore no strain budget to satisfy.
 
+Note in hindsight that this whole trade was being run on the wrong constraint: none of
+those pins were strain-limited or rib-limited in practice, they were limited by a barb that
+could not retract at all. See the per-point rule below before spending effort here.
+
 **Before concluding a mechanism is dead, check that the constraint is real.** The pin above
 was declared infeasible on exactly this arithmetic. It was not infeasible; the model had an
 arbitrary neck in the barb cone (`d2 = shaft_d - 2*y`) putting a 0.50 mm section at the free
@@ -343,6 +347,44 @@ PLA loaded across its layers. Two bad inputs, one confident "no solution exists"
 feasible set is a claim about your constraints before it is a claim about the world — so
 name each constraint and say where it came from, and treat "not at this size" as the
 conclusion you reach after that audit, not instead of it.
+
+**A split pin's barb must be checked per POINT, not per diameter — a full ring never
+retracts.** This one survived six revisions, three printed plates and every gate in the
+library, and it is the most expensive mistake in this file. The fingers deflect *across*
+the slot; call that Y. A barb point at `(x, y)` moves to `(x, y∓d)` and **its X coordinate
+never changes**. On a 4.7 mm ring barb the chord edges sit at |x| ≤ 2.30 against a 3.2 mm
+hole's 1.60 mm half-width, so no deflection whatsoever can move them through. Such pins do
+not snap in; they are *ploughed* in, and PLA obligingly scrapes.
+
+The tell is a limit that will not move. Insertion capped near 1.5 mm of closure no matter
+what changed — slot width, root fill, nose angle, strain budget — because the only quantity
+actually being measured was how much interference the material would scrape past. The
+second tell is a lever with the wrong *sign*: a fatter shank made insertion **worse**,
+because the "slop" being tightened was the ovalisation clearance that was getting the collar
+through at all.
+
+The condition is that a deflected point lands inside the hole:
+
+```
+x² + (y − d)² ≤ (hole_d/2)²
+```
+
+— a hole-sized cylinder shifted by `d`. Intersect the barb with it (`barb_mask()`) and keep
+the lens on each finger, which is the shape a commercial nylon push rivet already has.
+Two consequences worth stating before anyone sizes one:
+
+- **`d` comes from the slot, not the barb.** The fingers meet after closing `slot_w`
+  between them, so `d = slot_w/2`. Building the mask from the barb's *nominal* demand
+  `(barb_d − hole_d)/2` just rebuilds the same unpassable collar in a prettier shape.
+- **`barb_d` therefore stops being the retention knob; the slot is.** The mask clips at
+  `hole_d/2 + slot_w/2` whatever `barb_d` says, so effective ledge is
+  `(hole_d + slot_w − bore_d)/2` — and widening the slot moves it out one for one, against
+  `min_rib` on the finger.
+
+Generalise the habit, not the formula: for any flexure, write down the *displacement field*
+the mechanism actually produces and check every point of the feature against it. A
+characteristic dimension is a summary of that field, and a summary can be silent about the
+part that does not move.
 
 **Then size it.** "That looks like a lot of support" is answerable with a number:
 
