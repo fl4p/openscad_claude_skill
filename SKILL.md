@@ -1537,6 +1537,79 @@ module main_assembly() {
 - **Assert validation**: Use `assert()` to validate parameters: `assert(wall >= 1.2)`, `assert(boss_d > hole_d + 2*wall)`
 - **Profile-first**: Use `offset(r=corner_r)` on 2D `polygon()` instead of `hull()` with 3D cylinders
 
+### Designing for FDM: geometry rules
+
+The bullets above are the defaults. These are the shape decisions that change what the
+slicer can do, and most of them are cheaper to make in the model than in the slicer.
+
+**Chamfer, then fillet.** A fillet on a bottom edge starts as a near-horizontal overhang
+and prints badly at any size. A chamfer is a constant 45° and prints clean. To get a
+fillet's look without the overhang, chamfer first and then fillet the chamfer. As a
+finishing pass on the whole part: fillets first, then chamfers, gives the nicest
+transitions.
+
+**Orientation is a strength decision, not just an adhesion one.** Layer adhesion is the
+weak direction. Orient so the weak direction carries the largest cross-section. A handle
+printed lying flat, layers running along it, is strong; the same handle standing up snaps.
+Record the intended orientation in the source next to the geometry that depends on it.
+
+**Angle the whole part** before adding supports. Rotating a part is often enough to bring
+every overhang under 45° and is free.
+
+**Teardrop holes on vertical walls.** A circular hole in a side wall has a horizontal
+overhang at its crown, so large holes come out undersized and rough. Cut the crown away
+and replace it with a roof of two flat faces at 60° from horizontal, i.e. 30° from
+vertical. A 45° roof is the conservative version if the printer has not been tested:
+
+```openscad
+module teardrop_hole(d, h, eps = 0.01) {
+    r = d / 2;
+    rotate([-90, 0, 0])
+        linear_extrude(height = h + 2*eps, center = true)
+            union() {
+                circle(r = r, $fn = 64);
+                // 60 deg from horizontal roof over the crown
+                polygon([[-r, 0], [r, 0], [0, r / tan(30)]]);
+            }
+}
+```
+
+**Sacrificial bridging surfaces over a nut pocket.** When the bolt hole opens into a nut
+pocket in the bottom face, the hole prints in midair and the bore is ragged. Leave two
+0.2 mm surfaces, one per bridging direction, so the printer bridges first and prints the
+hole on a foundation.
+
+**Nut pockets entered from the side** need two of the pocket's parallel faces vertical,
+otherwise the remaining faces want support. A square nut in a rectangular side pocket is
+a good alternative to a heat-set insert when the back of the part is inaccessible.
+
+**Blocky beats lightweighted.** Injection-molding style weight-saving pockets make a
+printed part less rigid without saving material, and slower to print: infill already
+provides the internal stiffening, and every pocket trades fast infill for slow perimeters.
+Do not port a die-cast or molded part's ribbing pattern into a printed one.
+
+**Clearances are anisotropic.** A single `fit_clearance` is still the right structure, but
+sides need more gap than top and bottom faces, and small screw holes in vertical walls
+print undersize because of the crown overhang. If a part has fits in more than one
+orientation, derive from `fit_clearance` with an orientation factor rather than one number.
+
+**Model your own breakaway supports** for large, thin, awkward parts. Geometry in the model
+that is snapped off afterwards is more repeatable than slicer supports.
+
+**Print-in-place** is not only for toys. Interlocked geometry that prints in one go removes
+assembly steps entirely, up to and including ball bearings printed inside their cage.
+
+**Text: model the surround, not the glyphs.** For two-color text, put the face down on the
+bed, make the first layer the background and the second the contrasting fill. This is
+crisper than raised or engraved text at small sizes, because the minimum extrusion width
+limits how thin a printed stroke can be, while the *gap* between two adjacent extrusions
+can be much finer.
+
+**Iterate on a section.** When testing a large design, print only the region you changed.
+
+Source for these: Alexandre Chappel, "Everything I know about 3D Printing"
+(https://www.youtube.com/watch?v=gPW_mitgosw).
+
 ### Fitting to a part that already exists
 
 The moment one half of a mating pair has been printed, the problem stops being
