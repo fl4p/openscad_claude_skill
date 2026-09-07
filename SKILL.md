@@ -1542,19 +1542,26 @@ module main_assembly() {
 The bullets above are the defaults. These are the shape decisions that change what the
 slicer can do, and most of them are cheaper to make in the model than in the slicer.
 
-**Chamfer, then fillet.** A fillet on a bottom edge starts as a near-horizontal overhang
-and prints badly at any size. A chamfer is a constant 45° and prints clean. To get a
-fillet's look without the overhang, chamfer first and then fillet the chamfer. As a
-finishing pass on the whole part: fillets first, then chamfers, gives the nicest
-transitions.
+**Chamfer, then fillet.** A fillet on a bottom edge starts as a near-horizontal overhang;
+a chamfer holds a constant 45° and prints clean. To get a fillet's profile without the
+overhang, chamfer first and then fillet the chamfer. Judge the resulting surface angle
+against the limit above rather than the CAD operation order — a small enough fillet
+disappears into the layer height and prints fine. The whole-part finishing pass runs the
+other way round, fillets on the upright edges first and then chamfers on tops and bottoms,
+because those are different edges rather than the same edge done twice.
 
-**Orientation is a strength decision, not just an adhesion one.** Layer adhesion is the
-weak direction. Orient so the weak direction carries the largest cross-section. A handle
-printed lying flat, layers running along it, is strong; the same handle standing up snaps.
-Record the intended orientation in the source next to the geometry that depends on it.
+**Orientation is a strength decision, not just an adhesion one.** Layer interfaces are the
+weak plane. Orient from the expected load paths: keep tensile and bending stress within
+layers, and away from opening the interfaces. A handle printed lying flat, layers running
+along it, takes the load along the layers; the same handle standing up snaps at an
+interface. Cross-sectional area on its own is not the criterion. Record the intended
+orientation in the source next to the geometry that depends on it.
 
-**Angle the whole part** before adding supports. Rotating a part is often enough to bring
-every overhang under 45° and is free.
+**Evaluate alternative orientations** before adding supports. Rotating a part often brings
+every overhang under the limit, but it is not free: it trades bed contact, height, print
+time, which faces get the good finish, and where the dimensional error lands. Re-run the
+overhang audit per candidate — see "The orientation you model in is not the orientation it
+prints in" above.
 
 **Teardrop holes on vertical walls.** A circular hole in a side wall has a horizontal
 overhang at its crown, so large holes come out undersized and rough. Cut the crown away
@@ -1595,41 +1602,44 @@ module teardrop_hole(d, h, roof = 60, seg = 64, eps = 0.01) {
 }
 ```
 
-**Sacrificial bridging surfaces over a nut pocket.** When the bolt hole opens into a nut
-pocket in the bottom face, the hole prints in midair and the bore is ragged. Leave two
-0.2 mm surfaces, one per bridging direction, so the printer bridges first and prints the
-hole on a foundation.
+**Sacrificial membrane over a nut pocket.** When the bolt hole opens into a nut pocket in
+the bottom face, the bore prints in midair and comes out ragged. Cap the pocket with a
+sacrificial membrane one or two *actual* layers thick, leaving the bore closed, and pierce
+it after printing. Check in the sliced preview that the membrane becomes a continuous
+bridge anchored on two sides: a nominal 0.2 mm slab is one layer only if it lands on the
+layer grid, and the slicer, not the model, picks the bridge direction.
 
 **Nut pockets entered from the side** need two of the pocket's parallel faces vertical,
 otherwise the remaining faces want support. A square nut in a rectangular side pocket is
 a good alternative to a heat-set insert when the back of the part is inaccessible.
 
-**Blocky beats lightweighted.** Injection-molding style weight-saving pockets make a
-printed part less rigid without saving material, and slower to print: infill already
-provides the internal stiffening, and every pocket trades fast infill for slow perimeters.
-Do not port a die-cast or molded part's ribbing pattern into a printed one.
-
-**Clearances are anisotropic.** A single `fit_clearance` is still the right structure, but
-sides need more gap than top and bottom faces, and small screw holes in vertical walls
-print undersize because of the crown overhang. If a part has fits in more than one
-orientation, derive from `fit_clearance` with an orientation factor rather than one number.
+**Clearances are additive, and orientation-dependent.** A single `fit_clearance` is still
+the right thing to derive from, but not as one number scaled by a factor: printer error is
+largely additive, so a multiplier scales wrong with nominal size. Calibrate separate
+allowances for XY fits, Z fits and horizontal bores, on coupons printed in the production
+orientation.
 
 **Model your own breakaway supports** for large, thin, awkward parts. Geometry in the model
-that is snapped off afterwards is more repeatable than slicer supports.
+is more controllable than slicer supports for a known feature, because it survives a
+settings change. Compare the sliced toolpaths and the removal access before committing to
+it.
 
-**Print-in-place** is not only for toys. Interlocked geometry that prints in one go removes
-assembly steps entirely, up to and including ball bearings printed inside their cage. The
-joint lives or dies on one number: the gap between the moving faces, about one nozzle
+**Print-in-place** is not only for toys, up to and including ball bearings printed inside
+their cage — at toy precision and toy load, not as a substitute for a manufactured bearing.
+The joint lives or dies on one number: the gap between the moving faces, about one nozzle
 width. 0.4 mm frees reliably, 0.2 mm fuses.
 
 **Text: model the surround, not the glyphs.** For two-color text, put the face down on the
-bed, make the first layer the background and the second the contrasting fill. This is
-crisper than raised or engraved text at small sizes, because the minimum extrusion width
-limits how thin a printed stroke can be, while the *gap* between two adjacent extrusions
-can be much finer.
+bed, make the first layer the background and the second the contrasting fill. The bed fixes
+the visible face and the color boundary falls between two adjacent filled regions, which is
+where the crisp edge comes from. What survives at small sizes still depends on line width,
+gap-closing and XY calibration, and sub-width strokes and islands are dropped outright, so
+check the sliced first layer.
 
-Source for these: Alexandre Chappel, "Everything I know about 3D Printing"
-(https://www.youtube.com/watch?v=gPW_mitgosw).
+Source: the rules come from Alexandre Chappel, "Everything I know about 3D Printing"
+(https://www.youtube.com/watch?v=gPW_mitgosw). The numbers do not. The print-in-place gap,
+the module's `seg` floor and `roof` bounds, and the overhang figures behind the tangent
+roof are all bench measurements, not claims from the video.
 
 ### Fitting to a part that already exists
 
