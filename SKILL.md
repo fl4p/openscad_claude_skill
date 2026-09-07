@@ -1537,6 +1537,110 @@ module main_assembly() {
 - **Assert validation**: Use `assert()` to validate parameters: `assert(wall >= 1.2)`, `assert(boss_d > hole_d + 2*wall)`
 - **Profile-first**: Use `offset(r=corner_r)` on 2D `polygon()` instead of `hull()` with 3D cylinders
 
+### Designing for FDM: geometry rules
+
+The bullets above are the defaults. These are the shape decisions that change what the
+slicer can do, and most of them are cheaper to make in the model than in the slicer.
+
+**Chamfer, then fillet.** A fillet on a bottom edge starts as a near-horizontal overhang;
+a chamfer holds a constant 45° and prints clean. To get a fillet's profile without the
+overhang, chamfer first and then fillet the chamfer. Judge the resulting surface angle
+against the limit above rather than the CAD operation order — a small enough fillet
+disappears into the layer height and prints fine. The whole-part finishing pass runs the
+other way round, fillets on the upright edges first and then chamfers on tops and bottoms,
+because those are different edges rather than the same edge done twice.
+
+**Orientation is a strength decision, not just an adhesion one.** Layer interfaces are the
+weak plane. Orient from the expected load paths: keep tensile and bending stress within
+layers, and away from opening the interfaces. A handle printed lying flat, layers running
+along it, takes the load along the layers; the same handle standing up snaps at an
+interface. Cross-sectional area on its own is not the criterion. Record the intended
+orientation in the source next to the geometry that depends on it.
+
+**Evaluate alternative orientations** before adding supports. Rotating a part often brings
+every overhang under the limit, but it is not free: it trades bed contact, height, print
+time, which faces get the good finish, and where the dimensional error lands. Re-run the
+overhang audit per candidate — see "The orientation you model in is not the orientation it
+prints in" above.
+
+**Teardrop holes on vertical walls.** A circular hole in a side wall has a horizontal
+overhang at its crown, so large holes come out undersized and rough. Cut the crown away
+and replace it with a roof of two flat faces at 60° from horizontal, i.e. 30° from
+vertical. `roof = 45` is the aggressive end — 45° from horizontal is 45° from vertical,
+sitting exactly on the overhang limit above — so leave it at 60° on an untested printer.
+Set `h` to the wall thickness and centre the cutter on the wall midplane; it runs along Y,
+so rotate it if the wall normal is not Y. `seg` is a
+floor, not a preference: an inscribed polygon is undersized at the flats, which is where a
+screw bears, so the module circumscribes. That hazard is general to holes in this file, not
+specific to teardrops.
+
+```openscad
+// Negative volume: subtract from a wall whose faces are normal to Y.
+module teardrop_hole(d, h, roof = 60, seg = 64, eps = 0.01) {
+    assert(d > 0 && h > 0 && eps > 0);
+    assert(seg >= 3);
+    // Below 45 the roof is itself an overhang past the limit above. The upper bound is
+    // not 90: the apex is r/cos(roof), so it runs away long before that -- roof=89.9 on
+    // a d=8 hole is 2296 mm tall. At 75 the apex is already 3.86*r, which is as far as
+    // this is useful.
+    assert(roof >= 45 && roof <= 75, "roof must be 45-75 degrees from horizontal");
+    // Circumscribe. A seg-gon inscribed in d is undersized at the flats, which is where
+    // a screw bears; with no $fn at all OpenSCAD falls back to $fa/$fs and a d=3.2 bore
+    // comes out a hexagon 0.43 mm undersize.
+    r = (d / 2) / cos(180 / seg);
+    rotate([90, 0, 0])
+        linear_extrude(height = h + 2*eps, center = true)
+            union() {
+                circle(r = r, $fn = seg);
+                // Roof tangent to the bore at `roof` degrees from horizontal.
+                // Tangent, not a chord. A chord roof keeps circular ceiling past the
+                // limit: measured 20.8 mm2 of a d=8 bore at 59 deg from vertical, vs 0.
+                polygon([[-r * sin(roof), r * cos(roof)],
+                         [ r * sin(roof), r * cos(roof)],
+                         [0, r / cos(roof)]]);
+            }
+}
+```
+
+**Sacrificial membrane over a nut pocket.** When the bolt hole opens into a nut pocket in
+the bottom face, the bore prints in midair and comes out ragged. Cap the pocket with a
+sacrificial membrane one or two *actual* layers thick, leaving the bore closed, and pierce
+it after printing. Check in the sliced preview that the membrane becomes a continuous
+bridge anchored on two sides: a nominal 0.2 mm slab is one layer only if it lands on the
+layer grid, and the slicer, not the model, picks the bridge direction.
+
+**Nut pockets entered from the side** need two of the pocket's parallel faces vertical,
+otherwise the remaining faces want support. A square nut in a rectangular side pocket is
+a good alternative to a heat-set insert when the back of the part is inaccessible.
+
+**Clearances are additive, and orientation-dependent.** A single `fit_clearance` is still
+the right thing to derive from, but not as one number scaled by a factor: printer error is
+largely additive, so a multiplier scales wrong with nominal size. Calibrate separate
+allowances for XY fits, Z fits and horizontal bores, on coupons printed in the production
+orientation.
+
+**Model your own breakaway supports** for large, thin, awkward parts. Geometry in the model
+is more controllable than slicer supports for a known feature, because it survives a
+settings change. Compare the sliced toolpaths and the removal access before committing to
+it.
+
+**Print-in-place** is not only for toys, up to and including ball bearings printed inside
+their cage — at toy precision and toy load, not as a substitute for a manufactured bearing.
+The joint lives or dies on one number: the gap between the moving faces, about one nozzle
+width. 0.4 mm frees reliably, 0.2 mm fuses.
+
+**Text: model the surround, not the glyphs.** For two-color text, put the face down on the
+bed, make the first layer the background and the second the contrasting fill. The bed fixes
+the visible face and the color boundary falls between two adjacent filled regions, which is
+where the crisp edge comes from. What survives at small sizes still depends on line width,
+gap-closing and XY calibration, and sub-width strokes and islands are dropped outright, so
+check the sliced first layer.
+
+Source: the rules come from Alexandre Chappel, "Everything I know about 3D Printing"
+(https://www.youtube.com/watch?v=gPW_mitgosw). The numbers do not. The print-in-place gap,
+the module's `seg` floor and `roof` bounds, and the overhang figures behind the tangent
+roof are all bench measurements, not claims from the video.
+
 ### Fitting to a part that already exists
 
 The moment one half of a mating pair has been printed, the problem stops being
