@@ -1559,17 +1559,23 @@ every overhang under 45° and is free.
 **Teardrop holes on vertical walls.** A circular hole in a side wall has a horizontal
 overhang at its crown, so large holes come out undersized and rough. Cut the crown away
 and replace it with a roof of two flat faces at 60° from horizontal, i.e. 30° from
-vertical. A 45° roof is the conservative version if the printer has not been tested:
+vertical. `roof = 45` is the aggressive end — 45° from horizontal is 45° from vertical,
+sitting exactly on the overhang limit above — so leave it at 60° on an untested printer.
+The hole is centred on the origin and runs along Y; translate it onto the wall:
 
 ```openscad
-module teardrop_hole(d, h, eps = 0.01) {
+// Negative volume: subtract from a wall whose faces are normal to Y.
+module teardrop_hole(d, h, roof = 60, eps = 0.01) {
     r = d / 2;
-    rotate([-90, 0, 0])
+    rotate([90, 0, 0])
         linear_extrude(height = h + 2*eps, center = true)
             union() {
-                circle(r = r, $fn = 64);
-                // 60 deg from horizontal roof over the crown
-                polygon([[-r, 0], [r, 0], [0, r / tan(30)]]);
+                circle(r = r);                       // inherits the caller's $fn
+                // Roof tangent to the bore at `roof` degrees from horizontal.
+                // Tangent, not a chord: a chord leaves a reflex notch at the junction.
+                polygon([[-r * sin(roof), r * cos(roof)],
+                         [ r * sin(roof), r * cos(roof)],
+                         [0, r / cos(roof)]]);
             }
 }
 ```
