@@ -1561,16 +1561,22 @@ overhang at its crown, so large holes come out undersized and rough. Cut the cro
 and replace it with a roof of two flat faces at 60° from horizontal, i.e. 30° from
 vertical. `roof = 45` is the aggressive end — 45° from horizontal is 45° from vertical,
 sitting exactly on the overhang limit above — so leave it at 60° on an untested printer.
-The hole is centred on the origin and runs along Y; translate it onto the wall:
+The hole is centred on the origin and runs along Y; translate it onto the wall. `seg` is a
+floor, not a preference: an inscribed polygon is undersized at the flats, which is where a
+screw bears, so the module circumscribes. That hazard is general to holes in this file, not
+specific to teardrops.
 
 ```openscad
 // Negative volume: subtract from a wall whose faces are normal to Y.
-module teardrop_hole(d, h, roof = 60, eps = 0.01) {
-    r = d / 2;
+module teardrop_hole(d, h, roof = 60, seg = 64, eps = 0.01) {
+    // Circumscribe. A seg-gon inscribed in d is undersized at the flats, which is where
+    // a screw bears; with no $fn at all OpenSCAD falls back to $fa/$fs and a d=3.2 bore
+    // comes out a hexagon 0.43 mm undersize.
+    r = (d / 2) / cos(180 / seg);
     rotate([90, 0, 0])
         linear_extrude(height = h + 2*eps, center = true)
             union() {
-                circle(r = r);                       // inherits the caller's $fn
+                circle(r = r, $fn = seg);
                 // Roof tangent to the bore at `roof` degrees from horizontal.
                 // Tangent, not a chord: a chord leaves a reflex notch at the junction.
                 polygon([[-r * sin(roof), r * cos(roof)],
@@ -1603,7 +1609,9 @@ orientation, derive from `fit_clearance` with an orientation factor rather than 
 that is snapped off afterwards is more repeatable than slicer supports.
 
 **Print-in-place** is not only for toys. Interlocked geometry that prints in one go removes
-assembly steps entirely, up to and including ball bearings printed inside their cage.
+assembly steps entirely, up to and including ball bearings printed inside their cage. The
+joint lives or dies on one number: the gap between the moving faces, about one nozzle
+width. 0.4 mm frees reliably, 0.2 mm fuses.
 
 **Text: model the surround, not the glyphs.** For two-color text, put the face down on the
 bed, make the first layer the background and the second the contrasting fill. This is
