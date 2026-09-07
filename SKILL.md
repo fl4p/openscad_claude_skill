@@ -1561,7 +1561,8 @@ overhang at its crown, so large holes come out undersized and rough. Cut the cro
 and replace it with a roof of two flat faces at 60° from horizontal, i.e. 30° from
 vertical. `roof = 45` is the aggressive end — 45° from horizontal is 45° from vertical,
 sitting exactly on the overhang limit above — so leave it at 60° on an untested printer.
-The hole is centred on the origin and runs along Y; translate it onto the wall. `seg` is a
+Set `h` to the wall thickness and centre the cutter on the wall midplane; it runs along Y,
+so rotate it if the wall normal is not Y. `seg` is a
 floor, not a preference: an inscribed polygon is undersized at the flats, which is where a
 screw bears, so the module circumscribes. That hazard is general to holes in this file, not
 specific to teardrops.
@@ -1569,6 +1570,13 @@ specific to teardrops.
 ```openscad
 // Negative volume: subtract from a wall whose faces are normal to Y.
 module teardrop_hole(d, h, roof = 60, seg = 64, eps = 0.01) {
+    assert(d > 0 && h > 0 && eps > 0);
+    assert(seg >= 3);
+    // Below 45 the roof is itself an overhang past the limit above. The upper bound is
+    // not 90: the apex is r/cos(roof), so it runs away long before that -- roof=89.9 on
+    // a d=8 hole is 2296 mm tall. At 75 the apex is already 3.86*r, which is as far as
+    // this is useful.
+    assert(roof >= 45 && roof <= 75, "roof must be 45-75 degrees from horizontal");
     // Circumscribe. A seg-gon inscribed in d is undersized at the flats, which is where
     // a screw bears; with no $fn at all OpenSCAD falls back to $fa/$fs and a d=3.2 bore
     // comes out a hexagon 0.43 mm undersize.
@@ -1578,7 +1586,8 @@ module teardrop_hole(d, h, roof = 60, seg = 64, eps = 0.01) {
             union() {
                 circle(r = r, $fn = seg);
                 // Roof tangent to the bore at `roof` degrees from horizontal.
-                // Tangent, not a chord: a chord leaves a reflex notch at the junction.
+                // Tangent, not a chord. A chord roof keeps circular ceiling past the
+                // limit: measured 20.8 mm2 of a d=8 bore at 59 deg from vertical, vs 0.
                 polygon([[-r * sin(roof), r * cos(roof)],
                          [ r * sin(roof), r * cos(roof)],
                          [0, r / cos(roof)]]);
