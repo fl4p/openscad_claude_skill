@@ -1611,8 +1611,6 @@ crisper than raised or engraved text at small sizes, because the minimum extrusi
 limits how thin a printed stroke can be, while the *gap* between two adjacent extrusions
 can be much finer.
 
-**Iterate on a section.** When testing a large design, print only the region you changed.
-
 Source for these: Alexandre Chappel, "Everything I know about 3D Printing"
 (https://www.youtube.com/watch?v=gPW_mitgosw).
 
